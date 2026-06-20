@@ -1,0 +1,9 @@
+DEFAULT rescue
+TIMEOUT 10
+PROMPT 0
+
+LABEL rescue
+  KERNEL http://192.168.50.1:8080/linux
+  INITRD http://192.168.50.1:8080/initrd.gz
+  APPEND console=ttyS2,1500000n8 priority=critical auto=true preseed/url=http://192.168.50.1:8080/preseed.cfg hostname=rock5b domain=
+  FDT http://192.168.50.1:8080/dtb/rockchip/rk3588-rock-5b.dtb
