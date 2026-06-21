@@ -68,6 +68,8 @@ function buildReply(msgType, xid, mac, yiaddr, bootFile) {
   ipToBytes(yiaddr).forEach((b, i)       => { buf[16 + i] = b; }); // yiaddr
   ipToBytes(cfg.serverIp).forEach((b, i) => { buf[20 + i] = b; }); // siaddr
   Buffer.from(mac.split(':').map(s => parseInt(s, 16))).copy(buf, 28); // chaddr
+  // BOOTP file field (offset 108) — some UEFI stacks read this instead of option 67
+  Buffer.from(bootFile, 'ascii').copy(buf, 108, 0, Math.min(bootFile.length, 127));
   MAGIC_COOKIE.copy(buf, 236);
 
   let o = 240;
@@ -91,6 +93,12 @@ function buildReply(msgType, xid, mac, yiaddr, bootFile) {
   optU32(51, 3600);                           // lease time: 1 hour
   optBytes(1,  ...ipToBytes(cfg.subnetMask)); // subnet mask
   if (cfg.gateway) optBytes(3, ...ipToBytes(cfg.gateway)); // router
+  optStr(60, 'PXEClient');                    // vendor class — required by UEFI PXE stacks
+  // Option 43: PXE vendor-specific — sub-opt 6 (discovery-control=8) skips PXE
+  // discovery phase; required by BIOS PXE ROMs to accept the offer
+  buf[o++] = 43; buf[o++] = 4;
+  buf[o++] = 6; buf[o++] = 1; buf[o++] = 8;  // discovery-control = disable broadcast/multicast
+  buf[o++] = 255;                             // end of option 43
   optStr(66, cfg.serverIp);                   // TFTP server name
   optStr(67, bootFile);                       // boot filename
   buf[o++] = 255;                             // end
@@ -106,6 +114,99 @@ function assignArchIp(mac) {
   archPoolIdx++;
   archLeases.set(mac, ip);
   return ip;
+}
+
+// Shared boot-file lookup used by both DHCP and ProxyDHCP handlers.
+// Returns { bootFile, profileId } or null if no match.
+function resolveBootFile(msg, macTable, archTable) {
+  const mac         = macFromChaddr(msg);
+  const vendorClass = getVendorClass(msg);
+
+  if (macTable && macTable.has(mac)) {
+    const entry = macTable.get(mac);
+    let bootFile = entry.bootFile;
+    if (entry.bootFileByArch) {
+      const archCode = parseArchCode(vendorClass);
+      const archMap  = { 0: 'x86', 6: 'x86_ia32', 7: 'x86_64', 9: 'ebc', 11: 'arm64' };
+      bootFile = entry.bootFileByArch[archMap[archCode]] || entry.bootFile;
+    }
+    return { bootFile, profileId: entry.profileId };
+  }
+
+  if (archTable && vendorClass && !vendorClass.startsWith('iPXEClient')) {
+    const archCode = parseArchCode(vendorClass);
+    if (archCode >= 0 && archTable.has(archCode)) {
+      const entry = archTable.get(archCode);
+      return { bootFile: entry.bootFile, profileId: entry.profileId };
+    }
+  }
+
+  return null;
+}
+
+// ProxyDHCP reply — no IP assignment (yiaddr = 0.0.0.0), boot file only.
+// Used when a regular DHCP server (e.g. the router) already gives the client an IP.
+function buildProxyReply(msgType, xid, mac, bootFile) {
+  const buf = Buffer.alloc(548);
+  buf[0] = 2; buf[1] = 1; buf[2] = 6;        // BOOTREPLY, Ethernet, hlen=6
+  xid.copy(buf, 4);
+  buf.writeUInt16BE(0x8000, 10);               // broadcast flag
+  ipToBytes(cfg.serverIp).forEach((b, i) => { buf[20 + i] = b; }); // siaddr
+  Buffer.from(mac.split(':').map(s => parseInt(s, 16))).copy(buf, 28);
+  Buffer.from(bootFile, 'ascii').copy(buf, 108, 0, Math.min(bootFile.length, 127));
+  MAGIC_COOKIE.copy(buf, 236);
+
+  let o = 240;
+  function optBytes(type, ...bytes) { buf[o++] = type; buf[o++] = bytes.length; bytes.forEach(b => { buf[o++] = b; }); }
+  function optStr(type, str)        { const b = Buffer.from(str, 'ascii'); buf[o++] = type; buf[o++] = b.length; b.copy(buf, o); o += b.length; }
+
+  optBytes(53, msgType);
+  optBytes(54, ...ipToBytes(cfg.serverIp));
+  optStr(60, 'PXEClient');
+  buf[o++] = 43; buf[o++] = 4; buf[o++] = 6; buf[o++] = 1; buf[o++] = 8; buf[o++] = 255;
+  optStr(66, cfg.serverIp);
+  optStr(67, bootFile);
+  buf[o++] = 255;
+  return buf.slice(0, o);
+}
+
+function startProxyDHCP(macTable, archTable) {
+  const PROXY_PORT = 4011;
+  const server     = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+  server.on('message', (msg) => {
+    if (msg.length < 240) return;
+    if (msg[0] !== 1) return;
+    if (!msg.slice(236, 240).equals(MAGIC_COOKIE)) return;
+
+    const msgType = getMsgType(msg);
+    if (msgType !== 1 && msgType !== 3) return;
+
+    const result = resolveBootFile(msg, macTable, archTable);
+    if (!result) return;
+
+    const { bootFile, profileId } = result;
+    const mac = macFromChaddr(msg);
+    const xid = msg.slice(4, 8);
+
+    const replyType = msgType === 1 ? 2 : 5;
+    const pkt = buildProxyReply(replyType, xid, mac, bootFile);
+    server.send(pkt, CLIENT_PORT, '255.255.255.255');
+    console.log(`[${ts()}] PROXY ${msgType === 1 ? 'OFFER' : 'ACK  '} ${mac} [${profileId}] boot: ${bootFile}`);
+  });
+
+  server.on('error', err => {
+    console.error(`[${ts()}] ProxyDHCP ERROR: ${err.message}`);
+    if (err.code === 'EADDRINUSE') console.error(`[${ts()}]   → port 4011 already in use`);
+    if (err.code === 'EACCES')    console.error(`[${ts()}]   → run as Administrator`);
+  });
+
+  server.bind(PROXY_PORT, '0.0.0.0', () => {
+    server.setBroadcast(true);
+    console.log(`[${ts()}] ProxyDHCP listening on 0.0.0.0:${PROXY_PORT}`);
+  });
+
+  return server;
 }
 
 function startDHCP(macTable, archTable) {
@@ -125,9 +226,10 @@ function startDHCP(macTable, archTable) {
 
     // 1. MAC table — exact match (e.g. Rock5B)
     if (macTable && macTable.has(mac)) {
-      const entry = macTable.get(mac);
+      const entry  = macTable.get(mac);
+      const result = resolveBootFile(msg, macTable, null);
       yiaddr    = entry.ip;
-      bootFile  = entry.bootFile;
+      bootFile  = result ? result.bootFile : entry.bootFile;
       profileId = entry.profileId;
 
     // 2. Arch table — detect architecture from option 60
@@ -201,4 +303,4 @@ function startDHCP(macTable, archTable) {
   return server;
 }
 
-module.exports = { startDHCP };
+module.exports = { startDHCP, startProxyDHCP };

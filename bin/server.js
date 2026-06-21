@@ -5,7 +5,7 @@ const path    = require('path');
 const fs      = require('fs');
 const cfg     = require('../config');
 const { startTFTP }   = require('./tftp-server');
-const { startDHCP }   = require('./dhcp-server');
+const { startDHCP, startProxyDHCP } = require('./dhcp-server');
 const IfaceManager    = require('./iface-manager');
 const {
   loadProfiles,
@@ -157,7 +157,10 @@ function timestamp() { return new Date().toISOString(); }
 
   // ── Start servers ─────────────────────────────────────────────────────────
   const { macTable, archTable } = buildDhcpTable(activeProfiles);
-  if (useDhcp) startDHCP(macTable, archTable);
+  if (useDhcp) {
+    startDHCP(macTable, archTable);
+    startProxyDHCP(macTable, archTable);
+  }
   startTFTP(ROOT);
 
   httpServer.listen(cfg.httpPort, '0.0.0.0', () => {

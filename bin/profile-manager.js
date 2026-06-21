@@ -151,10 +151,11 @@ function buildDhcpTable(profiles) {
       : (p.mac ? [{ mac: p.mac, assignedIp: p.assignedIp }] : []);
 
     if (macEntries.length > 0) {
-      for (const { mac, assignedIp } of macEntries) {
+      for (const { mac, assignedIp, bootFileByArch } of macEntries) {
         macTable.set(mac.toLowerCase(), {
           ip:            assignedIp,
           bootFile:      p.bootFile,
+          bootFileByArch: bootFileByArch || null,
           profileId:     p.id,
           ipxeScriptUrl,
         });

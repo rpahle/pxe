@@ -7,7 +7,14 @@
   "mac": null,
   "assignedIp": null,
   "macs": [
-    { "mac": "68:f7:28:b2:8f:29", "assignedIp": "192.168.1.9" }
+    {
+      "mac": "68:f7:28:b2:8f:29",
+      "assignedIp": "192.168.1.9",
+      "bootFileByArch": {
+        "x86":    "files/shared/netboot.xyz/netboot.xyz.kpxe",
+        "x86_64": "files/shared/netboot.xyz/netboot.xyz.efi"
+      }
+    }
   ],
   "bootFile": "files/shared/netboot.xyz/netboot.xyz.efi",
   "filesDir": "shared/netboot.xyz"
