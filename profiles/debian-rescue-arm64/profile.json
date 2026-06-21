@@ -1,0 +1,21 @@
+{
+  "id": "debian-rescue-arm64",
+  "name": "Debian Rescue — ARM64 (Rock5B)",
+  "description": "Boots Debian netboot installer on Rock5B via U-Boot PXE. SSH console for NVMe repair.",
+  "arch": "arm64",
+  "bootMethod": "pxelinux",
+  "mac": "ba:bd:81:07:be:e4",
+  "assignedIp": "192.168.50.2",
+  "bootFile": "pxelinux.cfg/default",
+  "pxelinux": {
+    "label": "rescue",
+    "kernel": "http://{serverIp}:{httpPort}/files/debian-rescue-arm64/linux",
+    "initrd": "http://{serverIp}:{httpPort}/files/debian-rescue-arm64/initrd.gz",
+    "append": "console=ttyS2,1500000n8 priority=critical auto=true preseed/url=http://{serverIp}:{httpPort}/profiles/debian-rescue-arm64/preseed.cfg hostname=rock5b domain=",
+    "fdt":    "http://{serverIp}:{httpPort}/files/debian-rescue-arm64/dtb/rockchip/rk3588-rock-5b.dtb"
+  },
+  "grub": {
+    "linux":  "/files/debian-rescue-arm64/linux console=ttyS2,1500000n8 priority=critical auto=true preseed/url=http://{serverIp}:{httpPort}/profiles/debian-rescue-arm64/preseed.cfg hostname=rock5b domain=",
+    "initrd": "/files/debian-rescue-arm64/initrd.gz"
+  }
+}

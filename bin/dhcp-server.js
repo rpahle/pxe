@@ -6,6 +6,10 @@ const SERVER_PORT  = 67;
 const CLIENT_PORT  = 68;
 const MAGIC_COOKIE = Buffer.from([99, 130, 83, 99]);
 
+// In-process pool for arch-matched clients: mac → assigned IP
+const archLeases = new Map();
+let   archPoolIdx = 0;
+
 function ts() { return new Date().toISOString(); }
 
 function ipToBytes(ip) {
@@ -19,26 +23,49 @@ function macFromChaddr(buf) {
 }
 
 function getMsgType(buf) {
+  return getOption(buf, 53);
+}
+
+// Walk DHCP options, return value of first matching type as a Buffer (or null).
+function getOptionBuf(buf, type) {
   let i = 240;
   while (i < buf.length) {
     const opt = buf[i];
     if (opt === 255) break;
     if (opt === 0)  { i++; continue; }
     const len = buf[i + 1];
-    if (opt === 53 && len === 1) return buf[i + 2];
+    if (opt === type) return buf.slice(i + 2, i + 2 + len);
     i += 2 + len;
   }
   return null;
 }
 
-function buildReply(msgType, xid, mac, yiaddr) {
+// Return numeric value of a 1-byte option, or null.
+function getOption(buf, type) {
+  const b = getOptionBuf(buf, type);
+  return b && b.length >= 1 ? b[0] : null;
+}
+
+// Return option 60 (vendor class) as a string, or ''.
+function getVendorClass(buf) {
+  const b = getOptionBuf(buf, 60);
+  return b ? b.toString('ascii') : '';
+}
+
+// Parse arch code from "PXEClient:Arch:NNNNN:..." → integer, or -1.
+function parseArchCode(vendorClass) {
+  const m = vendorClass.match(/PXEClient:Arch:(\d{5})/);
+  return m ? parseInt(m[1], 10) : -1;
+}
+
+function buildReply(msgType, xid, mac, yiaddr, bootFile) {
   const buf = Buffer.alloc(548);
   buf[0] = 2;  // op: BOOTREPLY
   buf[1] = 1;  // htype: Ethernet
   buf[2] = 6;  // hlen
   xid.copy(buf, 4);
   buf.writeUInt16BE(0x8000, 10); // flags: broadcast
-  ipToBytes(yiaddr).forEach((b, i)      => { buf[16 + i] = b; }); // yiaddr
+  ipToBytes(yiaddr).forEach((b, i)       => { buf[16 + i] = b; }); // yiaddr
   ipToBytes(cfg.serverIp).forEach((b, i) => { buf[20 + i] = b; }); // siaddr
   Buffer.from(mac.split(':').map(s => parseInt(s, 16))).copy(buf, 28); // chaddr
   MAGIC_COOKIE.copy(buf, 236);
@@ -59,41 +86,87 @@ function buildReply(msgType, xid, mac, yiaddr) {
     buf.writeUInt32BE(val, o); o += 4;
   }
 
-  optBytes(53, msgType);                     // DHCP message type
-  optBytes(54, ...ipToBytes(cfg.serverIp));  // server identifier
-  optU32(51, 3600);                          // lease time: 1 hour
+  optBytes(53, msgType);                      // DHCP message type
+  optBytes(54, ...ipToBytes(cfg.serverIp));   // server identifier
+  optU32(51, 3600);                           // lease time: 1 hour
   optBytes(1,  ...ipToBytes(cfg.subnetMask)); // subnet mask
-  optStr(66, cfg.serverIp);                  // TFTP server name
-  optStr(67, cfg.bootFile);                  // boot filename
-  buf[o++] = 255;                            // end
+  optStr(66, cfg.serverIp);                   // TFTP server name
+  optStr(67, bootFile);                       // boot filename
+  buf[o++] = 255;                             // end
 
   return buf.slice(0, o);
 }
 
-function startDHCP() {
-  const targetMac = cfg.rock5bMac.toLowerCase();
+function assignArchIp(mac) {
+  if (archLeases.has(mac)) return archLeases.get(mac);
+  const pool = cfg.archPool || [];
+  if (pool.length === 0) return null;
+  const ip = pool[archPoolIdx % pool.length];
+  archPoolIdx++;
+  archLeases.set(mac, ip);
+  return ip;
+}
+
+function startDHCP(macTable, archTable) {
   const server = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
   server.on('message', (msg) => {
     if (msg.length < 240) return;
-    if (msg[0] !== 1) return;                         // only BOOTREQUEST
+    if (msg[0] !== 1) return;                          // only BOOTREQUEST
     if (!msg.slice(236, 240).equals(MAGIC_COOKIE)) return;
 
-    const mac = macFromChaddr(msg);
-    if (mac !== targetMac) return;                    // ignore other MACs
-
+    const mac     = macFromChaddr(msg);
     const xid     = msg.slice(4, 8);
     const msgType = getMsgType(msg);
+    if (msgType !== 1 && msgType !== 3) return;        // DISCOVER or REQUEST only
 
-    if (msgType === 1) {
-      console.log(`[${ts()}] DHCP DISC  ${mac} → offering ${cfg.rock5bIp}`);
-      const pkt = buildReply(2, xid, mac, cfg.rock5bIp);
-      server.send(pkt, CLIENT_PORT, '255.255.255.255');
-    } else if (msgType === 3) {
-      console.log(`[${ts()}] DHCP REQ   ${mac} → ACK ${cfg.rock5bIp}`);
-      const pkt = buildReply(5, xid, mac, cfg.rock5bIp);
-      server.send(pkt, CLIENT_PORT, '255.255.255.255');
+    let yiaddr, bootFile, profileId;
+
+    // 1. MAC table — exact match (e.g. Rock5B)
+    if (macTable && macTable.has(mac)) {
+      const entry = macTable.get(mac);
+      yiaddr    = entry.ip;
+      bootFile  = entry.bootFile;
+      profileId = entry.profileId;
+
+    // 2. Arch table — detect architecture from option 60
+    } else if (archTable) {
+      const vendorClass = getVendorClass(msg);
+      if (!vendorClass) return;
+
+      // iPXE re-request: serve the .ipxe script instead of the binary (prevents loop)
+      if (vendorClass.startsWith('iPXEClient')) {
+        // Find which arch-table entry this MAC was previously assigned to
+        const leaseIp = archLeases.get(mac);
+        if (!leaseIp) return; // unknown iPXE client — ignore
+        yiaddr = leaseIp;
+        // Find the matching arch entry by leased IP and return its ipxeScriptUrl as bootFile
+        for (const [, entry] of archTable) {
+          if (entry.ipxeScriptUrl) {
+            bootFile  = entry.ipxeScriptUrl;
+            profileId = entry.profileId;
+            break;
+          }
+        }
+        if (!bootFile) return;
+      } else {
+        const archCode = parseArchCode(vendorClass);
+        if (archCode < 0 || !archTable.has(archCode)) return;
+        const entry = archTable.get(archCode);
+        yiaddr    = assignArchIp(mac);
+        bootFile  = entry.bootFile;
+        profileId = entry.profileId;
+        if (!yiaddr) return; // archPool exhausted
+      }
+    } else {
+      return;
     }
+
+    const label = msgType === 1 ? 'DISC' : 'REQ ';
+    const reply = msgType === 1 ? 2 : 5;
+    console.log(`[${ts()}] DHCP ${label}  ${mac} [${profileId}] → offering ${yiaddr}  boot: ${bootFile}`);
+    const pkt = buildReply(reply, xid, mac, yiaddr, bootFile);
+    server.send(pkt, CLIENT_PORT, '255.255.255.255');
   });
 
   server.on('error', err => {
@@ -104,7 +177,7 @@ function startDHCP() {
 
   server.bind(SERVER_PORT, '0.0.0.0', () => {
     server.setBroadcast(true);
-    console.log(`[${ts()}] DHCP listening on 0.0.0.0:${SERVER_PORT} — ${cfg.rock5bMac} → ${cfg.rock5bIp}`);
+    console.log(`[${ts()}] DHCP listening on 0.0.0.0:${SERVER_PORT}`);
   });
 
   return server;
