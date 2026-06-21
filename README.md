@@ -1,8 +1,8 @@
 # PXE Boot Server — Multi-Profile
 
-Self-contained Node.js PXE boot server. Serves DHCP (port 67), TFTP (port 69), and HTTP (port 8080) from one process. Supports multiple OS and architecture targets simultaneously via a profile system — adding a new boot target requires no code changes, just a new folder.
+Self-contained Node.js PXE boot server. Serves DHCP (port 67), ProxyDHCP (port 4011), TFTP (port 69), and HTTP (port 8080) from one process. Supports multiple OS and architecture targets simultaneously via a profile system — adding a new boot target requires no code changes, just a new folder.
 
-Primary use case: rescuing a Rock5B (RK3588, ARM64) when NVMe boot is broken. Also supports x86/x86_64 netboot and ISO booting via iPXE.
+Primary use case: rescuing a Rock5B (RK3588, ARM64) when NVMe boot is broken. Also supports x86/x86_64 netboot, ISO booting via iPXE, and netboot.xyz for interactive OS selection.
 
 Runs on Windows or Linux. Direct-cable connection supported — prompts you to pick a NIC, assigns the rescue IP, and restores the original IP on exit.
 
@@ -14,11 +14,11 @@ Runs on Windows or Linux. Direct-cable connection supported — prompts you to p
 pxe/
 ├── bin/
 │   ├── server.js            # Entry point — HTTP server + startup prompts
-│   ├── dhcp-server.js       # DHCP — MAC-first routing, arch fallback via option 60
+│   ├── dhcp-server.js       # DHCP (port 67) + ProxyDHCP (port 4011)
 │   ├── tftp-server.js       # TFTP — serves boot files from project root
 │   ├── iface-manager.js     # NIC selection + IP assign/restore (Windows + Linux)
 │   └── profile-manager.js   # Profile loading, config generation, DHCP table building
-├── config.js                # Server IP, port, subnet, arch IP pool
+├── config.js                # Server IP, gateway, port, subnet, arch IP pool
 ├── profiles/                # Tracked in git — one folder per boot target
 │   ├── debian-rescue-arm64/
 │   │   ├── profile.json     # Boot config, metadata, file paths
@@ -27,14 +27,24 @@ pxe/
 │   │   └── profile.json     # Alpine 3.24 HTTP netboot for any UEFI ARM64 machine
 │   ├── alpine-rock5b/
 │   │   └── profile.json     # Alpine 3.24 for Rock5B via U-Boot — SSH auto-enabled
-│   └── sysrescue-x86_64/
-│       └── profile.json     # SystemRescue 13 HTTP netboot for x86_64 EFI
+│   ├── sysrescue-x86_64/
+│   │   └── profile.json     # SystemRescue 13 HTTP netboot for x86_64 EFI
+│   ├── netbootxyz-bios/
+│   │   └── profile.json     # netboot.xyz for legacy BIOS/x86 clients
+│   ├── netbootxyz-uefi/
+│   │   └── profile.json     # netboot.xyz for UEFI x86_64 clients
+│   └── netbootxyz-arm64/
+│       └── profile.json     # netboot.xyz for UEFI ARM64 clients
 ├── files/                   # Boot assets — gitignored, place manually
 │   ├── shared/
-│   │   └── ipxe/
-│   │       ├── ipxe.efi         # x86_64 EFI iPXE binary (~1.1 MB)
-│   │       ├── ipxe-arm64.efi   # ARM64 EFI iPXE binary (~1.1 MB)
-│   │       └── undionly.kpxe    # x86 BIOS iPXE binary (~70 KB)
+│   │   ├── ipxe/
+│   │   │   ├── ipxe.efi           # x86_64 EFI iPXE binary (~1.1 MB)
+│   │   │   ├── ipxe-arm64.efi     # ARM64 EFI iPXE binary (~1.1 MB)
+│   │   │   └── undionly.kpxe      # x86 BIOS iPXE binary (~70 KB)
+│   │   └── netboot.xyz/
+│   │       ├── netboot.xyz.kpxe       # netboot.xyz BIOS binary
+│   │       ├── netboot.xyz.efi        # netboot.xyz UEFI x86_64 binary
+│   │       └── netboot.xyz-arm64.efi  # netboot.xyz UEFI ARM64 binary
 │   ├── debian-rescue-arm64/
 │   │   ├── linux                # ARM64 netboot kernel (~36 MB)
 │   │   ├── initrd.gz            # ARM64 netboot initrd (~41 MB)
@@ -72,7 +82,7 @@ pxe/
 
 - Node.js 18 or later
 - Run as **Administrator** on Windows / **sudo** on Linux (ports 67 and 69 require elevated privileges)
-- Ethernet connection to the target machine (direct cable or same switch segment, no competing DHCP server)
+- Ethernet connection to the target machine (direct cable or same switch segment)
 
 ---
 
@@ -94,13 +104,15 @@ Then place boot files in `files/<profile-id>/` — see [Boot files](#boot-files)
 
 ```js
 module.exports = {
-  serverIp:   '192.168.50.1',   // IP assigned to your NIC during rescue
+  serverIp:   '192.168.1.73',  // IP this machine has on the rescue network
   subnetMask: '255.255.255.0',
+  gateway:    '192.168.1.1',   // Router IP sent to clients via DHCP option 3
+
   httpPort:   8080,
 
   // IPs offered to arch-matched clients (no fixed MAC).
   // Assigned round-robin; persist for the lifetime of the process.
-  archPool:   ['192.168.50.10', '192.168.50.11', '192.168.50.12'],
+  archPool:   ['192.168.1.220', '192.168.1.221', '192.168.1.222'],
 };
 ```
 
@@ -119,25 +131,32 @@ Available boot profiles:
   [1] debian-rescue-arm64    Debian Rescue — ARM64 (Rock5B)
                              Boots Debian netboot installer on Rock5B via U-Boot PXE. SSH console for NVMe repair.
                              arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
-  [2] alpine-rock5b            Alpine Linux 3.24 — Rock5B
+  [2] alpine-rock5b          Alpine Linux 3.24 — Rock5B
                              Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot.
                              arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
                              ssh: root / rescue123
-  [3] alpine-rescue-arm64     Alpine Linux 3.24 — ARM64
+  [3] alpine-rescue-arm64    Alpine Linux 3.24 — ARM64
                              Minimal live rescue environment for any UEFI ARM64 machine.
-                             arch: arm64 | method: ipxe | any ARM64 EFI client
+                             arch: arm64 | method: ipxe | any arm64 client
   [4] sysrescue-x86_64       SystemRescue 13 — x86_64
                              Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.
-                             arch: x86_64 | method: ipxe | any x86_64 EFI client
+                             arch: x86_64 | method: ipxe | any x86_64 client
                              ssh: root / rescue123
+  [5] netbootxyz-bios        netboot.xyz — BIOS
+                             netboot.xyz interactive boot menu for legacy BIOS/PXE clients.
+                             arch: x86 | method: direct | any x86 client
+  [6] netbootxyz-uefi        netboot.xyz — UEFI x86_64
+                             netboot.xyz interactive boot menu for UEFI x86_64 clients.
+                             arch: x86_64 | method: direct | MAC: 68:f7:28:b2:8f:29
+  [7] netbootxyz-arm64       netboot.xyz — UEFI ARM64
+                             netboot.xyz interactive boot menu for UEFI ARM64 clients.
+                             arch: arm64 | method: direct | any arm64 client
   [0] All profiles
-
-Select profiles [1]:
 ```
 
-Enter a number, comma-separated numbers (e.g. `1,2`), `0` for all, or press Enter to take the default (first profile). Active profiles determine which clients get DHCP responses and which boot files are served.
+Enter a number, comma-separated numbers (e.g. `1,2`), `0` for all, or press Enter for the default (first profile). Active profiles determine which clients get DHCP responses and which boot files are served.
 
-Profiles with missing `files/<id>/` directories show a `⚠ files missing` warning — the server still starts, boot will fail for that profile until files are placed.
+Only one profile can be active per arch in the arch table — if two arch-matched profiles share the same arch (e.g. `sysrescue-x86_64` and `netbootxyz-uefi` both use `x86_64`), the last one selected wins for that arch. MAC-pinned profiles always take priority and don't conflict.
 
 ### Prompt 2 — DHCP
 
@@ -145,49 +164,16 @@ Profiles with missing `files/<id>/` directories show a `⚠ files missing` warni
 Start DHCP server? [y/N]:
 ```
 
-- **Y** — starts the built-in DHCP server. Clients get their IP from this machine. You'll then be asked to pick a NIC.
-- **N** — skips DHCP and NIC management. Use this when your router handles DHCP and you only need HTTP + TFTP from this machine.
+- **Y** — starts the built-in DHCP server (port 67) and ProxyDHCP server (port 4011). Clients get their IP from this machine. You'll then be asked to pick a NIC.
+- **N** — skips DHCP and NIC management. Use this when your router handles DHCP and you only need HTTP + TFTP.
 
 ### Prompt 3 — NIC selection (only if DHCP = Y)
 
-```
-Available interfaces:
-  [1] Ethernet                          192.168.1.5
-  [2] Ethernet 2                        no IPv4
-  [3] Wi-Fi                             192.168.1.10
-  [0] Skip — manage IP manually
-
-Select interface:
-```
-
 Pick the NIC connected to the target. The server saves the current IP config, assigns `serverIp` from `config.js`, and restores the original on Ctrl+C. Pick `0` to skip — useful if the IP is already set.
-
-### Startup output
-
-```
-╔══════════════════════════════════════════════════════════╗
-║          PXE Boot Server  —  Multi-Profile               ║
-╠══════════════════════════════════════════════════════════╣
-║  Server : http://192.168.50.1:8080                       ║
-║  debian-rescue-arm64  [pxelinux]  MAC ba:bd:81:07:be:e4  ║
-║    linux  (36.1 MB)                                      ║
-║    initrd.gz  (41.3 MB)                                  ║
-╚══════════════════════════════════════════════════════════╝
-
-[...] IFACE    Ethernet 2 → 192.168.50.1/24 assigned
-[...] DHCP listening on 0.0.0.0:67
-[...] TFTP listening on 0.0.0.0:69
-[...] HTTP listening on 0.0.0.0:8080 — ready
-```
 
 ### Shutdown
 
-Press **Ctrl+C**. The NIC IP is restored before exit:
-
-```
-[...] SIGINT received — shutting down...
-[...] IFACE    Ethernet 2 → restored to DHCP
-```
+Press **Ctrl+C**. The NIC IP is restored before exit.
 
 ---
 
@@ -203,10 +189,13 @@ Each profile is a folder under `profiles/` containing a `profile.json` and any i
 | `name` | Human-readable name shown at startup. |
 | `description` | One-line description shown at startup. |
 | `arch` | `arm64`, `x86_64`, or `x86` — used for DHCP arch detection fallback. |
-| `bootMethod` | `pxelinux`, `ipxe`, or `ipxe-iso` — drives which config is generated. |
-| `mac` | Ethernet MAC for MAC-matched routing. `null` for arch-detected clients. |
-| `assignedIp` | Static IP offered to this MAC. `null` for arch clients (uses `archPool`). |
-| `bootFile` | Path to the first file the client fetches via TFTP (option 67). |
+| `bootMethod` | `pxelinux`, `ipxe`, `ipxe-iso`, or `direct` — drives which config is generated. |
+| `mac` | Single MAC for MAC-matched routing. `null` for arch-detected clients. |
+| `macs` | Array of `{mac, assignedIp}` (or `{mac, assignedIp, bootFileByArch}`) objects — use instead of `mac`/`assignedIp` to pin multiple machines to one profile. |
+| `assignedIp` | Static IP offered to a single `mac`. `null` for arch clients (uses `archPool`). |
+| `bootFile` | Default TFTP boot file (DHCP option 67). Used when `bootFileByArch` is absent. |
+| `bootFileByArch` | Per-entry map of arch string → boot file. When set on a `macs` entry, the server reads the client's arch from DHCP option 60 and picks the matching file automatically — useful when you don't know if a machine is BIOS or UEFI. Keys: `x86`, `x86_64`, `arm64`. |
+| `filesDir` | Override for which `files/` subdirectory to check for boot assets. Defaults to `id`. |
 | `pxelinux` | Boot config block for `bootMethod: "pxelinux"`. |
 | `grub` | GRUB config block — served dynamically at `/profiles/<id>/grub.cfg`. |
 | `ipxe` | iPXE config block for `bootMethod: "ipxe"` or `"ipxe-iso"`. |
@@ -215,25 +204,30 @@ Template tokens `{serverIp}` and `{httpPort}` in any string value are expanded a
 
 ### Boot methods
 
-**`pxelinux`** — Used by U-Boot on ARM boards. DHCP sends `pxelinux.cfg/default` as the boot file. U-Boot fetches it via TFTP; the file contains HTTP URLs for kernel, initrd, DTB, and kernel args. Used by the Rock5B.
+**`pxelinux`** — Used by U-Boot on ARM boards. DHCP sends `pxelinux.cfg/default` as the boot file. U-Boot fetches it via TFTP; the file contains HTTP URLs for kernel, initrd, DTB, and kernel args.
 
 **`ipxe`** — DHCP sends an iPXE binary (`ipxe.efi` or `undionly.kpxe`) as the boot file. The client fetches it via TFTP, then makes a second DHCP request identified as `iPXEClient`. The server responds with `/profiles/<id>/boot.ipxe` as the boot file. iPXE fetches that script over HTTP and boots kernel + initrd.
 
-**`ipxe-iso`** — Same iPXE chainload as above, but the generated script uses `sanboot <iso-url>` to boot an ISO file served directly over HTTP. No extraction needed.
+**`ipxe-iso`** — Same iPXE chainload as above, but the generated script uses `sanboot <iso-url>` to boot an ISO file served directly over HTTP.
+
+**`direct`** — DHCP serves `bootFile` directly via TFTP. The file is a self-contained bootloader (e.g. netboot.xyz). No iPXE script is generated. Used by the netboot.xyz profiles.
 
 ### DHCP routing
 
 The DHCP server uses two-tier routing:
 
-1. **MAC match** — if the client's MAC matches a profile's `mac` field, that profile is used and the client gets `assignedIp`. Highest priority.
-2. **Arch fallback** — if no MAC matches, the server reads DHCP option 60 (vendor class identifier). U-Boot and PXE clients send `PXEClient:Arch:NNNNN` where `NNNNN` is:
+1. **MAC match** — if the client's MAC matches any entry in a profile's `mac` or `macs` fields, that profile is used and the client gets its `assignedIp`. Highest priority. If the entry has `bootFileByArch`, the boot file is selected based on the client's reported arch (DHCP option 60).
+
+2. **Arch fallback** — if no MAC matches, the server reads DHCP option 60 (vendor class identifier). PXE clients send `PXEClient:Arch:NNNNN` where `NNNNN` is:
    - `00000` → x86 BIOS
    - `00007` → x86_64 EFI
    - `00011` → ARM64 EFI
 
    The server picks the active profile matching that arch and assigns an IP from `archPool`.
 
-3. **iPXE loop prevention** — when an iPXE binary re-requests DHCP (option 60 = `iPXEClient:...`), the server serves the `.ipxe` script URL instead of the binary again, preventing an infinite boot loop.
+3. **iPXE loop prevention** — when an iPXE binary re-requests DHCP (option 60 = `iPXEClient:...`), the server serves the `.ipxe` script URL instead of the binary, preventing an infinite boot loop.
+
+4. **ProxyDHCP (port 4011)** — when DHCP is enabled, a ProxyDHCP server also starts on port 4011. Some BIOS PXE ROMs get their IP from the network router and then separately query port 4011 for the boot file. ProxyDHCP responds with just the boot file (no IP assignment), covering this case alongside the regular DHCP server on port 67.
 
 Unknown clients (no MAC match, no recognized arch) are silently ignored.
 
@@ -242,6 +236,18 @@ Unknown clients (no MAC match, no recognized arch) are silently ignored.
 ## Boot files
 
 The `files/` directory is gitignored. Download once and place manually.
+
+### netboot.xyz
+
+Download from [netboot.xyz](https://netboot.xyz/downloads/):
+
+```bash
+mkdir -p files/shared/netboot.xyz
+
+wget https://boot.netboot.xyz/ipxe/netboot.xyz.kpxe       -O files/shared/netboot.xyz/netboot.xyz.kpxe
+wget https://boot.netboot.xyz/ipxe/netboot.xyz.efi         -O files/shared/netboot.xyz/netboot.xyz.efi
+wget https://boot.netboot.xyz/ipxe/netboot.xyz-arm64.efi   -O files/shared/netboot.xyz/netboot.xyz-arm64.efi
+```
 
 ### ARM64 (Rock5B rescue)
 
@@ -253,7 +259,6 @@ mkdir -p files/debian-rescue-arm64/dtb/rockchip
 wget $BASE/linux     -O files/debian-rescue-arm64/linux
 wget $BASE/initrd.gz -O files/debian-rescue-arm64/initrd.gz
 
-# GRUB EFI binary (needed by some U-Boot versions)
 wget https://deb.debian.org/debian/dists/stable/main/installer-arm64/current/images/netboot/grubaa64.efi \
      -O files/debian-rescue-arm64/grubaa64.efi
 
@@ -263,27 +268,12 @@ cp /boot/dtb/rockchip/rk3588-rock-5b.dtb files/debian-rescue-arm64/dtb/rockchip/
 
 ### x86 / x86_64 (iPXE profiles)
 
-Download iPXE binaries from [boot.ipxe.org](https://boot.ipxe.org):
-
 ```bash
 mkdir -p files/shared/ipxe
 
-wget https://boot.ipxe.org/x86_64-efi/ipxe.efi  -O files/shared/ipxe/ipxe.efi      # x86_64 EFI
-wget https://boot.ipxe.org/undionly.kpxe          -O files/shared/ipxe/undionly.kpxe  # x86 BIOS
-```
-
-Then place OS-specific assets in `files/<profile-id>/`:
-
-```bash
-# Example: Debian x86_64 netboot
-mkdir -p files/debian-install-x86_64
-wget <debian-x86_64-netboot-url>/linux     -O files/debian-install-x86_64/linux
-wget <debian-x86_64-netboot-url>/initrd.gz -O files/debian-install-x86_64/initrd.gz
-
-# Example: SystemRescue ISO
-mkdir -p files/sysrescue-x86
-wget https://downloads.sourceforge.net/project/systemrescuecd/sysrescue/<ver>/systemrescue-<ver>.iso \
-     -O files/sysrescue-x86/systemrescue.iso
+wget https://boot.ipxe.org/x86_64-efi/ipxe.efi  -O files/shared/ipxe/ipxe.efi
+wget https://boot.ipxe.org/undionly.kpxe          -O files/shared/ipxe/undionly.kpxe
+wget https://boot.ipxe.org/arm64-efi/ipxe.efi     -O files/shared/ipxe/ipxe-arm64.efi
 ```
 
 ---
@@ -298,11 +288,42 @@ No code changes required.
 
 ---
 
-### Example 1 — Debian installer, x86_64, any EFI machine (iPXE)
+### Example 1 — netboot.xyz, arch-detected (direct)
 
-Boots the Debian text installer on any x86_64 EFI machine that PXE boots. DHCP detects arch from option 60, serves the iPXE binary, then chainloads to the Debian netboot kernel.
+The three netboot.xyz profiles are already in the repo. They use `bootMethod: "direct"` — DHCP serves the binary straight via TFTP and netboot.xyz presents its own interactive menu.
 
-**`profiles/debian-install-x86_64/profile.json`:**
+To pin a specific machine to netboot.xyz while auto-detecting whether it's BIOS or UEFI, add a `macs` entry with `bootFileByArch`:
+
+```json
+{
+  "id": "netbootxyz-uefi",
+  "name": "netboot.xyz — UEFI x86_64",
+  "description": "netboot.xyz interactive boot menu for UEFI x86_64 clients.",
+  "arch": "x86_64",
+  "bootMethod": "direct",
+  "mac": null,
+  "assignedIp": null,
+  "macs": [
+    {
+      "mac": "68:f7:28:b2:8f:29",
+      "assignedIp": "192.168.1.9",
+      "bootFileByArch": {
+        "x86":    "files/shared/netboot.xyz/netboot.xyz.kpxe",
+        "x86_64": "files/shared/netboot.xyz/netboot.xyz.efi"
+      }
+    }
+  ],
+  "bootFile": "files/shared/netboot.xyz/netboot.xyz.efi",
+  "filesDir": "shared/netboot.xyz"
+}
+```
+
+The server reads the client's arch from DHCP option 60 at request time and serves the correct binary automatically.
+
+---
+
+### Example 2 — Debian installer, x86_64, any EFI machine (iPXE)
+
 ```json
 {
   "id": "debian-install-x86_64",
@@ -321,44 +342,22 @@ Boots the Debian text installer on any x86_64 EFI machine that PXE boots. DHCP d
 }
 ```
 
-**`profiles/debian-install-x86_64/preseed.cfg`** (optional — for unattended installs):
-```
-d-i debian-installer/locale string en_US.UTF-8
-d-i keyboard-configuration/xkb-keymap select us
-d-i netcfg/choose_interface select auto
-d-i netcfg/get_hostname string debian
-d-i netcfg/get_domain string
-d-i anna/choose_modules string network-console
-d-i network-console/password password rescue123
-d-i network-console/password-again password rescue123
-d-i network-console/start boolean true
-```
-
-**Boot files:**
-```bash
-BASE=https://deb.debian.org/debian/dists/stable/main/installer-amd64/current/images/netboot/debian-installer/amd64
-mkdir -p files/debian-install-x86_64
-wget $BASE/linux     -O files/debian-install-x86_64/linux
-wget $BASE/initrd.gz -O files/debian-install-x86_64/initrd.gz
-```
-
 ---
 
-### Example 2 — Alpine Linux 3.24, ARM64 UEFI (HTTP netboot) ← included
-
-Lightweight rescue environment for any UEFI ARM64 machine — Ampere, AWS Graviton, modern SBCs with full UEFI. Boots in seconds, root shell with no password, install any tool on-demand with `apk add`. The kernel includes DTBs for many ARM boards including the Rock5B.
+### Example 3 — Alpine Linux 3.24, ARM64 UEFI (HTTP netboot) ← included
 
 **`profiles/alpine-rescue-arm64/profile.json`** (already in repo):
 ```json
 {
   "id": "alpine-rescue-arm64",
   "name": "Alpine Linux 3.24 — ARM64",
-  "description": "Minimal live rescue environment for any UEFI ARM64 machine. Root shell, no password. Install tools with apk.",
+  "description": "Minimal live rescue environment for any UEFI ARM64 machine.",
   "arch": "arm64",
   "bootMethod": "ipxe",
   "mac": null,
   "assignedIp": null,
   "bootFile": "files/shared/ipxe/ipxe-arm64.efi",
+  "ssh": "root / rescue123",
   "ipxe": {
     "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
     "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
@@ -367,11 +366,7 @@ Lightweight rescue environment for any UEFI ARM64 machine — Ampere, AWS Gravit
 }
 ```
 
-All boot files and SSH packages are served from the local PXE server — no internet access required on the rescue machine.
-
-The `apkovl` overlay installs openssh at boot from pre-downloaded packages in `files/alpine-rescue-arm64/apk/`. The script parses the PXE server URL from the kernel command line, so it works regardless of what IP `config.js` uses.
-
-**Boot files** — download from Alpine CDN (run once to populate `files/`):
+**Boot files:**
 ```bash
 BASE=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/netboot
 mkdir -p files/alpine-rescue-arm64/apk/v3.24/main/aarch64
@@ -379,14 +374,11 @@ mkdir -p files/alpine-rescue-arm64/apk/v3.24/main/aarch64
 wget $BASE/vmlinuz-lts    -O files/alpine-rescue-arm64/vmlinuz-lts
 wget $BASE/initramfs-lts  -O files/alpine-rescue-arm64/initramfs-lts
 wget $BASE/modloop-lts    -O files/alpine-rescue-arm64/modloop-lts
-wget $BASE/../APKINDEX.tar.gz  -O files/alpine-rescue-arm64/apk/v3.24/main/aarch64/APKINDEX.tar.gz  # wrong path — see below
 
-# Download the APKINDEX and openssh packages
 REPO=https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64
 APK_DST=files/alpine-rescue-arm64/apk/v3.24/main/aarch64
 wget $REPO/APKINDEX.tar.gz -O $APK_DST/APKINDEX.tar.gz
 
-# Find exact versions from the index, then download:
 for pkg in libcrypto3 openssh openssh-client-common openssh-client-default \
            openssh-keygen openssh-server openssh-server-common openssh-sftp-server; do
   VER=$(tar -xOf $APK_DST/APKINDEX.tar.gz APKINDEX | awk "/^P:$pkg$/{found=1} found && /^V:/{print substr(\$0,3); exit}")
@@ -394,107 +386,16 @@ for pkg in libcrypto3 openssh openssh-client-common openssh-client-default \
 done
 ```
 
-Also download the ARM64 iPXE EFI binary:
-```bash
-wget https://boot.ipxe.org/arm64-efi/ipxe.efi -O files/shared/ipxe/ipxe-arm64.efi
-```
-
-**At boot**, SSH comes up automatically (~15–20 s after the shell prompt):
-```bash
-ssh root@<assigned-ip>
-# Password: rescue123
-```
-
 ---
 
-### Example 2b — Alpine Linux 3.24, Rock5B (U-Boot PXE) ← included
-
-Same Alpine kernel as the generic ARM64 profile but MAC-matched to the Rock5B, with the correct serial console, Rock5B DTB, and an **apkovl** overlay that installs openssh and enables root login automatically at boot.
-
-The apkovl (`files/alpine-rock5b/apkovl.tar.gz`) contains a single startup script:
-```sh
-#!/bin/sh
-apk add --quiet openssh
-echo 'root:rescue123' | chpasswd
-echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-rc-service sshd start
-```
-
-**`profiles/alpine-rock5b/profile.json`** (already in repo):
-```json
-{
-  "id": "alpine-rock5b",
-  "name": "Alpine Linux 3.24 — Rock5B",
-  "description": "Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot (root / rescue123).",
-  "arch": "arm64",
-  "bootMethod": "pxelinux",
-  "mac": "ba:bd:81:07:be:e4",
-  "assignedIp": "192.168.50.2",
-  "bootFile": "pxelinux.cfg/default",
-  "filesDir": "alpine-rescue-arm64",
-  "pxelinux": {
-    "label": "alpine",
-    "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
-    "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
-    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz",
-    "fdt": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/dtb/rockchip/rk3588-rock-5b.dtb"
-  }
-}
-```
-
-`filesDir` tells the server to check `files/alpine-rescue-arm64/` for boot assets instead of `files/alpine-rock5b/` — the two Alpine profiles share the same kernel, initrd, modloop, and DTB.
-
-**SSH access once booted** (requires the rescue machine to reach Alpine's CDN to install openssh):
-```bash
-ssh root@192.168.50.2
-# Password: rescue123
-```
-
-**Note:** SSH setup runs from the `local` OpenRC service, which starts after networking. It takes ~15–20 seconds after the shell prompt appears. If SSH is refused initially, wait a moment and retry.
-
----
-
-### Example 3 — SystemRescue ISO, x86 BIOS (iPXE sanboot)
-
-Boots SystemRescue directly from an ISO over HTTP. Works on old BIOS machines. No extraction — the ISO is streamed via iPXE's sanboot.
-
-**`profiles/sysrescue-x86/profile.json`:**
-```json
-{
-  "id": "sysrescue-x86",
-  "name": "SystemRescue — x86 BIOS ISO",
-  "description": "Boots SystemRescue live ISO via iPXE HTTP sanboot. For BIOS machines, no extraction needed.",
-  "arch": "x86",
-  "bootMethod": "ipxe-iso",
-  "mac": null,
-  "assignedIp": null,
-  "bootFile": "files/shared/ipxe/undionly.kpxe",
-  "ipxe": {
-    "sanboot": "http://{serverIp}:{httpPort}/files/sysrescue-x86/systemrescue.iso"
-  }
-}
-```
-
-**Boot files:**
-```bash
-VER=11.02
-mkdir -p files/sysrescue-x86
-wget "https://downloads.sourceforge.net/project/systemrescuecd/sysrescue/${VER}/systemrescue-${VER}.iso" \
-     -O files/sysrescue-x86/systemrescue.iso
-```
-
----
-
-### Example 3 — SystemRescue 13, x86_64 EFI (HTTP netboot) ← included
-
-This profile is already in the repo. It uses HTTP netboot: kernel, microcode initrds, and initramfs are fetched separately over HTTP, and the squashfs root filesystem is streamed by the kernel from `archiso_http_srv` at boot. This is faster than sanboot because only needed files are fetched.
+### Example 4 — SystemRescue 13, x86_64 EFI (HTTP netboot) ← included
 
 **`profiles/sysrescue-x86_64/profile.json`** (already in repo):
 ```json
 {
   "id": "sysrescue-x86_64",
   "name": "SystemRescue 13 — x86_64",
-  "description": "Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server. Squashfs fetched over HTTP at boot.",
+  "description": "Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.",
   "arch": "x86_64",
   "bootMethod": "ipxe",
   "mac": null,
@@ -507,12 +408,10 @@ This profile is already in the repo. It uses HTTP netboot: kernel, microcode ini
       "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/amd_ucode.img",
       "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/sysresccd.img"
     ],
-    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp"
+    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp rootpass=rescue123"
   }
 }
 ```
-
-The `archiso_http_srv` parameter tells the SystemRescue initramfs where to fetch `sysresccd/x86_64/airootfs.sfs` from. It constructs: `{archiso_http_srv}{archisobasedir}/{arch}/airootfs.sfs`.
 
 **Boot files** — extract from ISO on Linux:
 ```bash
@@ -531,134 +430,7 @@ cp "$TMP/sysresccd/x86_64/airootfs.sha512"     files/sysrescue-x86_64/sysresccd/
 umount "$TMP" && rm "$ISO"
 ```
 
-On Windows: mount the ISO in Explorer and copy the files, or use PowerShell `Mount-DiskImage`.
-
-**At boot**, SystemRescue starts root shell + SSH server. Connect with:
-
-```bash
-ssh root@<assigned-ip>
-# Password: rescue123
-```
-
-The password is set via `rootpass=rescue123` in the `append` field. Change it there to use a different password.
-
----
-
-### Example 4 — Ubuntu Server 24.04, specific machine by MAC (iPXE autoinstall)
-
-Targets one specific server by MAC address. Gives it a fixed IP and boots Ubuntu's autoinstall (cloud-init). The autoinstall config is served from `profiles/ubuntu-server-x86_64/`.
-
-**`profiles/ubuntu-server-x86_64/profile.json`:**
-```json
-{
-  "id": "ubuntu-server-x86_64",
-  "name": "Ubuntu Server 24.04 — rack node",
-  "description": "Unattended Ubuntu Server 24.04 install for the rack node (MAC aa:bb:cc:dd:ee:ff).",
-  "arch": "x86_64",
-  "bootMethod": "ipxe",
-  "mac": "aa:bb:cc:dd:ee:ff",
-  "assignedIp": "192.168.50.5",
-  "bootFile": "files/shared/ipxe/ipxe.efi",
-  "ipxe": {
-    "kernel": "http://{serverIp}:{httpPort}/files/ubuntu-server-x86_64/vmlinuz",
-    "initrd": "http://{serverIp}:{httpPort}/files/ubuntu-server-x86_64/initrd",
-    "append": "root=/dev/ram0 ramdisk_size=1500000 ip=dhcp url=http://{serverIp}:{httpPort}/files/ubuntu-server-x86_64/ubuntu-24.04-live-server-amd64.iso autoinstall ds=nocloud-net;s=http://{serverIp}:{httpPort}/profiles/ubuntu-server-x86_64/"
-  }
-}
-```
-
-**`profiles/ubuntu-server-x86_64/user-data`** (cloud-init autoinstall config — minimal example):
-```yaml
-#cloud-config
-autoinstall:
-  version: 1
-  locale: en_US.UTF-8
-  keyboard:
-    layout: us
-  network:
-    network:
-      version: 2
-      ethernets:
-        any:
-          match:
-            name: "en*"
-          dhcp4: true
-  storage:
-    layout:
-      name: lvm
-  identity:
-    hostname: rack-node
-    username: rob
-    password: "$6$rounds=4096$saltsalt$hashedpassword"
-  ssh:
-    install-server: true
-    allow-pw: true
-  late-commands:
-    - echo 'rob ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/rob
-```
-
-**`profiles/ubuntu-server-x86_64/meta-data`** (required by cloud-init, can be empty):
-```yaml
-instance-id: rack-node-01
-```
-
-**Boot files:**
-```bash
-mkdir -p files/ubuntu-server-x86_64
-
-# Download the live server ISO
-wget https://releases.ubuntu.com/24.04/ubuntu-24.04-live-server-amd64.iso \
-     -O files/ubuntu-server-x86_64/ubuntu-24.04-live-server-amd64.iso
-
-# Extract vmlinuz and initrd from the ISO
-ISO=files/ubuntu-server-x86_64/ubuntu-24.04-live-server-amd64.iso
-TMP=$(mktemp -d)
-mount -o loop,ro "$ISO" "$TMP"
-cp "$TMP/casper/vmlinuz" files/ubuntu-server-x86_64/vmlinuz
-cp "$TMP/casper/initrd"  files/ubuntu-server-x86_64/initrd
-umount "$TMP"
-```
-
----
-
-### Example 5 — Windows PE, x86_64 EFI (iPXE + wimboot)
-
-Boots a Windows PE environment over the network using [wimboot](https://ipxe.org/wimboot). Requires a Windows ADK WIM file and `wimboot` binary.
-
-**`profiles/winpe-x86_64/profile.json`:**
-```json
-{
-  "id": "winpe-x86_64",
-  "name": "Windows PE — x86_64",
-  "description": "Windows Preinstallation Environment via iPXE + wimboot. Requires Windows ADK WIM.",
-  "arch": "x86_64",
-  "bootMethod": "ipxe",
-  "mac": null,
-  "assignedIp": null,
-  "bootFile": "files/shared/ipxe/ipxe.efi",
-  "ipxe": {
-    "kernel": "http://{serverIp}:{httpPort}/files/winpe-x86_64/wimboot",
-    "initrd": "http://{serverIp}:{httpPort}/files/winpe-x86_64/BCD      BCD\nhttp://{serverIp}:{httpPort}/files/winpe-x86_64/boot.sdi     boot.sdi\nhttp://{serverIp}:{httpPort}/files/winpe-x86_64/winpe.wim   winpe.wim",
-    "append": ""
-  }
-}
-```
-
-> **Note:** wimboot uses a special multi-file initrd syntax. The `initrd` field above shows the format — each line is `<url> <target-name>`. This is passed as separate `initrd` lines in the generated iPXE script.
-
-**Boot files** (requires Windows ADK installed):
-```bash
-mkdir -p files/winpe-x86_64
-
-# Download wimboot
-wget https://github.com/ipxe/wimboot/releases/latest/download/wimboot \
-     -O files/winpe-x86_64/wimboot
-
-# From Windows ADK (run on Windows):
-# copype amd64 C:\WinPE
-# Copy these files from C:\WinPE\media\Boot\ and C:\WinPE\media\sources\:
-#   BCD, boot.sdi, boot.wim (rename to winpe.wim)
-```
+SSH credentials: `root / rescue123` (set via `rootpass=` in the `append` field).
 
 ---
 
@@ -668,7 +440,7 @@ wget https://github.com/ipxe/wimboot/releases/latest/download/wimboot \
 Rock5B U-Boot (SPI)
   │
   ├─ DHCP DISCOVER ──────────────────────────────────────────────────────┐
-  │    ← OFFER: ip=192.168.50.2, server=192.168.50.1                    │
+  │    ← OFFER: ip=192.168.1.2, server=192.168.1.73                     │
   │       boot-file=pxelinux.cfg/default                         [this server]
   │
   ├─ TFTP GET pxelinux.cfg/default
@@ -678,7 +450,7 @@ Rock5B U-Boot (SPI)
   ├─ HTTP GET /files/debian-rescue-arm64/initrd.gz    ← initrd
   ├─ HTTP GET /profiles/debian-rescue-arm64/preseed.cfg
   │
-  └─ Debian installer boots → SSH on 192.168.50.2:22
+  └─ Debian installer boots → SSH on 192.168.1.2:22
 ```
 
 ## Boot flow — x86 iPXE chainload
@@ -687,12 +459,12 @@ Rock5B U-Boot (SPI)
 x86 client (BIOS/EFI)
   │
   ├─ DHCP DISCOVER (option 60 = "PXEClient:Arch:00007")
-  │    ← OFFER: ip=192.168.50.10, boot-file=files/shared/ipxe/ipxe.efi
+  │    ← OFFER: ip=192.168.1.220, boot-file=files/shared/ipxe/ipxe.efi
   │
   ├─ TFTP GET files/shared/ipxe/ipxe.efi       ← iPXE binary
   │
   ├─ iPXE DHCP DISCOVER (option 60 = "iPXEClient:...")
-  │    ← OFFER: boot-file=http://192.168.50.1:8080/profiles/<id>/boot.ipxe
+  │    ← OFFER: boot-file=http://192.168.1.73:8080/profiles/<id>/boot.ipxe
   │
   ├─ HTTP GET /profiles/<id>/boot.ipxe         ← iPXE script
   │
@@ -702,6 +474,20 @@ x86 client (BIOS/EFI)
   └─ HTTP GET /files/<id>/<name>.iso           ← ISO     (ipxe-iso sanboot)
 ```
 
+## Boot flow — netboot.xyz (direct)
+
+```
+x86 client (BIOS or UEFI)
+  │
+  ├─ DHCP DISCOVER (option 60 = "PXEClient:Arch:NNNNN")
+  │    ← OFFER: ip=192.168.1.9, boot-file=files/shared/netboot.xyz/netboot.xyz.kpxe
+  │       (boot file chosen automatically from bootFileByArch based on arch code)
+  │
+  ├─ TFTP GET files/shared/netboot.xyz/netboot.xyz.kpxe
+  │
+  └─ netboot.xyz menu — pick any OS to boot from the internet
+```
+
 ---
 
 ## Rock5B rescue procedure
@@ -709,7 +495,7 @@ x86 client (BIOS/EFI)
 ### 1. SSH into the installer
 
 ```bash
-ssh installer@192.168.50.2
+ssh installer@192.168.1.2
 # Password: rescue123
 ```
 
@@ -733,30 +519,20 @@ chroot /mnt
 
 ### 4. Common fixes
 
-**Re-flash U-Boot to SPI** (if NVMe PCIe doesn't initialize — Pe812 = patched U-Boot with delay):
-
+**Re-flash U-Boot to SPI:**
 ```bash
 dd if=/home/rob/u-boot-pe812.bin of=/dev/mtdblock0 bs=4k && sync
 ```
 
 **Rebuild kernel / ZFS DKMS:**
-
 ```bash
 dpkg --configure -a
 update-initramfs -u -k all
 ```
 
-**Reinstall kernel:**
-
-```bash
-apt-get install --reinstall linux-image-$(uname -r)
-```
-
 **Fix ZFS pool auto-import:**
-
 ```bash
 zpool import data
-# Writes /etc/zfs/zpool.cache — pool auto-imports on subsequent boots
 ```
 
 ### 5. Exit and reboot
@@ -773,35 +549,69 @@ reboot
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `⚠ files missing` at startup | `files/<profile-id>/` doesn't exist or is empty | Create the directory and place boot files in it |
-| No DHCP log entries | Cable not linked, or competing DHCP server won | Check physical link; ensure no other DHCP server is on the segment |
-| DHCP seen but no TFTP | U-Boot didn't try TFTP, or wrong boot file path | Verify DHCP log shows the correct `bootFile` from the profile |
-| TFTP serves file but no HTTP | `pxelinux.cfg/default` has stale URLs | Restart server — file is regenerated from the active profile at startup |
-| `ABORT` in HTTP log | Client dropped the connection mid-download | Check cable quality; try a different NIC or switch port |
-| SSH connection refused | Installer not ready yet | Wait 60–90 s after HTTP downloads finish, then retry |
-| SSH password rejected | `preseed.cfg` not fetched | Check HTTP log for `GET /profiles/<id>/preseed.cfg` |
-| iPXE loops (keeps re-downloading iPXE binary) | Option 60 iPXE detection not working | Check that DHCP log shows `iPXEClient` being detected and `.ipxe` URL served |
-| Kernel panic on boot | Kernel/initrd version mismatch | Re-download a matching kernel + initrd pair |
+| `⚠ files missing` at startup | `files/<profile-id>/` doesn't exist | Create the directory and place boot files in it |
+| No DHCP log entries | Cable not linked, or no matching profile | Check physical link; verify a profile is active for this client's arch or MAC |
+| DHCP DISC loop — no REQ | Client receiving OFFER but rejecting it | See MikroTik section — a blocked DHCP lease sends NAK and wins over your OFFER |
+| DHCP DISC loop — no REQ (no MikroTik) | Old BIOS PXE ROM strict about option 43 | Already handled; if still failing, capture with Wireshark and check packet content |
+| DHCP seen but no TFTP | Wrong boot file path in profile | Verify DHCP log shows the correct `bootFile`; check file exists in `files/` |
+| TFTP serves file but no HTTP | `pxelinux.cfg/default` has stale URLs | Restart server — file is regenerated at startup |
+| `ABORT` in HTTP log | Client dropped connection mid-download | Check cable quality; try different switch port |
+| SSH connection refused | Installer/OS not ready yet | Wait 60–90 s after HTTP downloads finish, then retry |
+| iPXE loops (keeps re-downloading binary) | iPXE re-request not detected | Check DHCP log shows `iPXEClient` being detected and `.ipxe` URL served |
 | Port 67/69 permission denied | Not running as admin/root | Windows: run terminal as Administrator; Linux: `sudo npm start` |
+| netboot.xyz: "no DHCP offers received" | Another DHCP server on network sending NAK | See MikroTik section below |
 
 ---
 
-## Using with MikroTik (external DHCP)
+## Using with MikroTik
 
-Answer **N** to the DHCP prompt and configure the router to point clients at this machine:
+### Option A — let MikroTik handle DHCP, this server does TFTP + HTTP only
+
+Answer **N** to the DHCP prompt and configure MikroTik to point clients at this machine:
 
 ```routeros
-# Set TFTP server and boot file for the LAN
 /ip dhcp-server network set [find] \
-  next-server=<this-machine-ip> \
+  next-server=192.168.1.73 \
   boot-file-name="pxelinux.cfg/default"
-
-# Prevent MikroTik from answering the Rock5B's DHCP (if using built-in DHCP for other clients)
-/ip dhcp-server lease add mac-address=BA:BD:81:07:BE:E4 blocked=yes
 ```
 
 After rescue, revert:
-
 ```routeros
 /ip dhcp-server network set [find] next-server="" boot-file-name=""
 ```
+
+### Option B — this server handles DHCP for specific clients (recommended)
+
+Answer **Y** to the DHCP prompt. This server handles DHCP only for clients whose MAC or arch matches an active profile. All other clients continue to get DHCP from MikroTik normally.
+
+**Critical: use a firewall filter, not a blocked lease**
+
+To prevent MikroTik from responding to a client you want this server to handle, you must **drop the DHCP request in MikroTik's firewall** — do NOT use a blocked DHCP lease.
+
+**Why blocked leases are wrong:** MikroTik's `blocked=yes` DHCP lease does not mean "ignore this client." It means "actively send DHCPNAK to this client." The NAK arrives alongside your server's OFFER, and the NAK wins — the client resets and retries DISCOVER forever, never getting an IP from either server.
+
+**Correct approach — drop in firewall so MikroTik is silent:**
+
+```routeros
+# Remove any blocked lease for this MAC first
+/ip dhcp-server lease remove [find mac-address="68:F7:28:B2:8F:29"]
+
+# Drop DHCP requests from this MAC before MikroTik's DHCP server sees them
+/ip firewall filter add \
+  chain=input action=drop protocol=udp dst-port=67 \
+  src-mac-address=68:F7:28:B2:8F:29 \
+  comment="PXE client — handled by external PXE server"
+```
+
+This drops the packet on MikroTik's input chain (so its DHCP server never processes it and never responds), while your PXE server independently receives the same broadcast and responds normally.
+
+To revert:
+```routeros
+/ip firewall filter remove [find comment="PXE client — handled by external PXE server"]
+```
+
+**Check for blocked leases** if you see a DISCOVER loop with no REQUEST:
+```routeros
+/ip dhcp-server lease print where mac-address="68:F7:28:B2:8F:29"
+```
+A `B` flag in the output means MikroTik is sending NAK. Remove it and add the firewall rule above.
