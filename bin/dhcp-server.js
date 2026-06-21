@@ -136,11 +136,12 @@ function startDHCP(macTable, archTable) {
 
       // iPXE re-request: serve the .ipxe script instead of the binary (prevents loop)
       if (vendorClass.startsWith('iPXEClient')) {
-        // Find which arch-table entry this MAC was previously assigned to
         const leaseIp = archLeases.get(mac);
-        if (!leaseIp) return; // unknown iPXE client — ignore
+        if (!leaseIp) {
+          console.log(`[${ts()}] DHCP DROP  ${mac} iPXE re-request but no prior lease — ignoring`);
+          return;
+        }
         yiaddr = leaseIp;
-        // Find the matching arch entry by leased IP and return its ipxeScriptUrl as bootFile
         for (const [, entry] of archTable) {
           if (entry.ipxeScriptUrl) {
             bootFile  = entry.ipxeScriptUrl;
@@ -148,25 +149,41 @@ function startDHCP(macTable, archTable) {
             break;
           }
         }
-        if (!bootFile) return;
+        if (!bootFile) {
+          console.log(`[${ts()}] DHCP DROP  ${mac} iPXE re-request but no ipxe script in active profiles`);
+          return;
+        }
+        console.log(`[${ts()}] DHCP iPXE  ${mac} re-request → serving script: ${bootFile}`);
       } else {
         const archCode = parseArchCode(vendorClass);
-        if (archCode < 0 || !archTable.has(archCode)) return;
+        if (archCode < 0 || !archTable.has(archCode)) {
+          console.log(`[${ts()}] DHCP DROP  ${mac} unrecognized vendor class: "${vendorClass}"`);
+          return;
+        }
         const entry = archTable.get(archCode);
         yiaddr    = assignArchIp(mac);
         bootFile  = entry.bootFile;
         profileId = entry.profileId;
-        if (!yiaddr) return; // archPool exhausted
+        if (!yiaddr) {
+          console.log(`[${ts()}] DHCP DROP  ${mac} archPool exhausted — add more IPs to config.js archPool`);
+          return;
+        }
       }
     } else {
       return;
     }
 
-    const label = msgType === 1 ? 'DISC' : 'REQ ';
-    const reply = msgType === 1 ? 2 : 5;
-    console.log(`[${ts()}] DHCP ${label}  ${mac} [${profileId}] → offering ${yiaddr}  boot: ${bootFile}`);
-    const pkt = buildReply(reply, xid, mac, yiaddr, bootFile);
-    server.send(pkt, CLIENT_PORT, '255.255.255.255');
+    if (msgType === 1) {
+      console.log(`[${ts()}] DHCP DISC  ${mac} [${profileId}]`);
+      const pkt = buildReply(2, xid, mac, yiaddr, bootFile);
+      server.send(pkt, CLIENT_PORT, '255.255.255.255');
+      console.log(`[${ts()}] DHCP OFFER ${mac} → ${yiaddr}  boot: ${bootFile}`);
+    } else {
+      console.log(`[${ts()}] DHCP REQ   ${mac} [${profileId}]`);
+      const pkt = buildReply(5, xid, mac, yiaddr, bootFile);
+      server.send(pkt, CLIENT_PORT, '255.255.255.255');
+      console.log(`[${ts()}] DHCP ACK   ${mac} → ${yiaddr}  boot: ${bootFile}`);
+    }
   });
 
   server.on('error', err => {

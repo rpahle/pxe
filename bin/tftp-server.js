@@ -39,18 +39,25 @@ function startTFTP(rootDir) {
     send(buf, addr, port);
   }
 
-  function finish(key, state, ok) {
+  function finish(key, state, ok, reason) {
     if (state.done) return;
     state.done = true;
     if (state.timer) clearTimeout(state.timer);
     transfers.delete(key);
     try { fs.closeSync(state.fd); } catch (_) {}
+    const s = (Date.now() - state.startTime) / 1000;
     if (ok) {
-      const s = (Date.now() - state.startTime) / 1000;
       console.log(
         `[${ts()}] TFTP DONE ${state.addr} ${state.name}` +
         ` | ${state.fileSize.toLocaleString()} B | ${s.toFixed(1)}s` +
         ` | ${s > 0 ? Math.round(state.fileSize / s).toLocaleString() : '?'} B/s`
+      );
+    } else {
+      const sent = Math.min(state.windowEnd * state.blockSize, state.fileSize);
+      const pct  = state.fileSize > 0 ? Math.round(sent / state.fileSize * 100) : 0;
+      console.log(
+        `[${ts()}] TFTP FAIL ${state.addr} ${state.name}` +
+        ` | ${reason || 'aborted'} | ${pct}% sent | ${s.toFixed(1)}s`
       );
     }
   }
@@ -60,8 +67,7 @@ function startTFTP(rootDir) {
     state.timer = setTimeout(() => {
       if (state.done) return;
       if (++state.retries > MAX_RETRIES) {
-        console.log(`[${ts()}] TFTP TIMEOUT ${state.addr} ${state.name}`);
-        finish(key, state, false);
+        finish(key, state, false, 'timeout');
         return;
       }
       // Retransmit OACK or current window
@@ -98,7 +104,7 @@ function startTFTP(rootDir) {
       const n = startBlock + i;
       let pkt, bytesRead;
       try { ({ pkt, bytesRead } = buildData(state, n)); }
-      catch (e) { finish(key, state, false); return; }
+      catch (e) { finish(key, state, false, 'read error'); return; }
 
       send(pkt, state.addr, state.port);
       state.windowEnd = n;
@@ -241,7 +247,7 @@ function startTFTP(rootDir) {
 
     // Close any stale transfer from the same client (retransmitted RRQ)
     const prev = transfers.get(key);
-    if (prev) finish(key, prev, false);
+    if (prev) finish(key, prev, false, 'superseded by new RRQ');
 
     // Build OACK packet (reused on retransmit)
     let oackPkt = null;
