@@ -1,0 +1,15 @@
+{
+  "id": "alpine-rescue-arm64",
+  "name": "Alpine Linux 3.24 — ARM64",
+  "description": "Minimal live rescue environment for any UEFI ARM64 machine. Root shell, no password. Install tools with apk.",
+  "arch": "arm64",
+  "bootMethod": "ipxe",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/ipxe/ipxe-arm64.efi",
+  "ipxe": {
+    "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
+    "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
+    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main console=tty0"
+  }
+}

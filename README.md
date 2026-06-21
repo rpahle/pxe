@@ -23,18 +23,25 @@ pxe/
 │   ├── debian-rescue-arm64/
 │   │   ├── profile.json     # Boot config, metadata, file paths
 │   │   └── preseed.cfg      # Debian installer config (SSH console, password)
+│   ├── alpine-rescue-arm64/
+│   │   └── profile.json     # Alpine 3.24 HTTP netboot for any UEFI ARM64 machine
 │   └── sysrescue-x86_64/
 │       └── profile.json     # SystemRescue 13 HTTP netboot for x86_64 EFI
 ├── files/                   # Boot assets — gitignored, place manually
 │   ├── shared/
 │   │   └── ipxe/
 │   │       ├── ipxe.efi         # x86_64 EFI iPXE binary (~1.1 MB)
+│   │       ├── ipxe-arm64.efi   # ARM64 EFI iPXE binary (~1.1 MB)
 │   │       └── undionly.kpxe    # x86 BIOS iPXE binary (~70 KB)
 │   ├── debian-rescue-arm64/
 │   │   ├── linux                # ARM64 netboot kernel (~36 MB)
 │   │   ├── initrd.gz            # ARM64 netboot initrd (~41 MB)
 │   │   ├── grubaa64.efi         # GRUB EFI binary for ARM64
 │   │   └── dtb/rockchip/rk3588-rock-5b.dtb
+│   ├── alpine-rescue-arm64/     # Alpine 3.24 ARM64 netboot files (~290 MB total)
+│   │   ├── vmlinuz-lts          # Kernel (~12 MB)
+│   │   ├── initramfs-lts        # Initramfs (~27 MB)
+│   │   └── modloop-lts          # Kernel modules (~252 MB)
 │   └── sysrescue-x86_64/        # SystemRescue 13 netboot files (~1.3 GB total)
 │       └── sysresccd/
 │           ├── boot/
@@ -103,7 +110,10 @@ Available boot profiles:
   [1] debian-rescue-arm64    Debian Rescue — ARM64 (Rock5B)
                              Boots Debian netboot installer on Rock5B via U-Boot PXE. SSH console for NVMe repair.
                              arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
-  [2] sysrescue-x86_64       SystemRescue 13 — x86_64
+  [2] alpine-rescue-arm64     Alpine Linux 3.24 — ARM64
+                             Minimal live rescue environment for any UEFI ARM64 machine.
+                             arch: arm64 | method: ipxe | any ARM64 EFI client
+  [3] sysrescue-x86_64       SystemRescue 13 — x86_64
                              Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.
                              arch: x86_64 | method: ipxe | any x86_64 EFI client
                              ssh: root / rescue123
@@ -321,7 +331,57 @@ wget $BASE/initrd.gz -O files/debian-install-x86_64/initrd.gz
 
 ---
 
-### Example 2 — SystemRescue ISO, x86 BIOS (iPXE sanboot)
+### Example 2 — Alpine Linux 3.24, ARM64 UEFI (HTTP netboot) ← included
+
+Lightweight rescue environment for any UEFI ARM64 machine — Ampere, AWS Graviton, modern SBCs with full UEFI. Boots in seconds, root shell with no password, install any tool on-demand with `apk add`. The kernel includes DTBs for many ARM boards including the Rock5B.
+
+**`profiles/alpine-rescue-arm64/profile.json`** (already in repo):
+```json
+{
+  "id": "alpine-rescue-arm64",
+  "name": "Alpine Linux 3.24 — ARM64",
+  "description": "Minimal live rescue environment for any UEFI ARM64 machine. Root shell, no password. Install tools with apk.",
+  "arch": "arm64",
+  "bootMethod": "ipxe",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/ipxe/ipxe-arm64.efi",
+  "ipxe": {
+    "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
+    "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
+    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main console=tty0"
+  }
+}
+```
+
+The `modloop` parameter points to the local kernel modules file. `alpine_repo` points to Alpine's CDN for `apk add` — remove it if the rescue machine has no internet access.
+
+**Boot files** — download from Alpine CDN:
+```bash
+BASE=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/netboot
+mkdir -p files/alpine-rescue-arm64
+
+wget $BASE/vmlinuz-lts    -O files/alpine-rescue-arm64/vmlinuz-lts
+wget $BASE/initramfs-lts  -O files/alpine-rescue-arm64/initramfs-lts
+wget $BASE/modloop-lts    -O files/alpine-rescue-arm64/modloop-lts
+```
+
+Also download the ARM64 iPXE EFI binary:
+```bash
+wget https://boot.ipxe.org/arm64-efi/ipxe.efi -O files/shared/ipxe/ipxe-arm64.efi
+```
+
+**At boot**, you get a root shell directly (no password). To enable SSH:
+```sh
+apk add openssh
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+passwd          # set a password
+rc-service sshd start
+```
+
+---
+
+### Example 3 — SystemRescue ISO, x86 BIOS (iPXE sanboot)
 
 Boots SystemRescue directly from an ISO over HTTP. Works on old BIOS machines. No extraction — the ISO is streamed via iPXE's sanboot.
 
