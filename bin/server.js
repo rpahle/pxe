@@ -56,7 +56,9 @@ function timestamp() { return new Date().toISOString(); }
     console.log('║  (no profiles active)                                    ║');
   } else {
     for (const p of activeProfiles) {
-      const routing = p.mac ? `MAC ${p.mac}` : `any ${p.arch}`;
+      const routing = p.macs
+        ? p.macs.map(m => `MAC ${m.mac}`).join(', ')
+        : (p.mac ? `MAC ${p.mac}` : `any ${p.arch}`);
       const line    = `  ${p.id}  [${p.bootMethod}]  ${routing}`;
       console.log(`║${line.padEnd(58)}║`);
 

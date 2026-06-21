@@ -74,7 +74,9 @@ async function promptSelectProfiles(profiles) {
 
   console.log('\nAvailable boot profiles:');
   profiles.forEach((p, i) => {
-    const macInfo  = p.mac ? `MAC: ${p.mac}` : `any ${p.arch} client`;
+    const macInfo  = p.macs
+      ? p.macs.map(m => `MAC: ${m.mac}`).join(', ')
+      : (p.mac ? `MAC: ${p.mac}` : `any ${p.arch} client`);
     const warning  = p._filesExist ? '' : '  ⚠ files missing';
     const sshInfo = p.ssh || (extractRootpass(p) ? `root / ${extractRootpass(p)}` : null);
     console.log(`  [${i + 1}] ${p.id.padEnd(30)} ${p.name}`);
@@ -143,13 +145,20 @@ function buildDhcpTable(profiles) {
       ? `http://${cfg.serverIp}:${cfg.httpPort}/profiles/${p.id}/boot.ipxe`
       : null;
 
-    if (p.mac) {
-      macTable.set(p.mac.toLowerCase(), {
-        ip:            p.assignedIp,
-        bootFile:      p.bootFile,
-        profileId:     p.id,
-        ipxeScriptUrl,
-      });
+    // Support "macs" array of {mac, assignedIp} or legacy single "mac"+"assignedIp"
+    const macEntries = p.macs
+      ? p.macs
+      : (p.mac ? [{ mac: p.mac, assignedIp: p.assignedIp }] : []);
+
+    if (macEntries.length > 0) {
+      for (const { mac, assignedIp } of macEntries) {
+        macTable.set(mac.toLowerCase(), {
+          ip:            assignedIp,
+          bootFile:      p.bootFile,
+          profileId:     p.id,
+          ipxeScriptUrl,
+        });
+      }
     } else {
       // Map arch string → integer code
       const archCode = Object.entries(ARCH_CODES).find(([, v]) => v === p.arch)?.[0];

@@ -1,0 +1,11 @@
+{
+  "id": "netbootxyz-uefi",
+  "name": "netboot.xyz — UEFI x86_64",
+  "description": "netboot.xyz interactive boot menu for UEFI x86_64 clients.",
+  "arch": "x86_64",
+  "bootMethod": "direct",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/netboot.xyz/netboot.xyz.efi",
+  "filesDir": "shared/netboot.xyz"
+}

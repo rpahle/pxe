@@ -1,0 +1,11 @@
+{
+  "id": "netbootxyz-arm64",
+  "name": "netboot.xyz — UEFI ARM64",
+  "description": "netboot.xyz interactive boot menu for UEFI ARM64 clients.",
+  "arch": "arm64",
+  "bootMethod": "direct",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/netboot.xyz/netboot.xyz-arm64.efi",
+  "filesDir": "shared/netboot.xyz"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "netbootxyz-bios",
+  "name": "netboot.xyz — BIOS",
+  "description": "netboot.xyz interactive boot menu for legacy BIOS/PXE clients.",
+  "arch": "x86",
+  "bootMethod": "direct",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/netboot.xyz/netboot.xyz.kpxe",
+  "filesDir": "shared/netboot.xyz"
+}
