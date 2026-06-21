@@ -106,6 +106,7 @@ Available boot profiles:
   [2] sysrescue-x86_64       SystemRescue 13 — x86_64
                              Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.
                              arch: x86_64 | method: ipxe | any x86_64 EFI client
+                             ssh: root / rescue123
   [0] All profiles
 
 Select profiles [1]:
@@ -399,7 +400,14 @@ umount "$TMP" && rm "$ISO"
 
 On Windows: mount the ISO in Explorer and copy the files, or use PowerShell `Mount-DiskImage`.
 
-**At boot**, SystemRescue starts root shell + SSH server (`root` user, set password via `rootpass=<pw>` kernel param).
+**At boot**, SystemRescue starts root shell + SSH server. Connect with:
+
+```bash
+ssh root@<assigned-ip>
+# Password: rescue123
+```
+
+The password is set via `rootpass=rescue123` in the `append` field. Change it there to use a different password.
 
 ---
 
