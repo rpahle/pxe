@@ -1,15 +1,16 @@
 {
   "id": "alpine-rescue-arm64",
   "name": "Alpine Linux 3.24 — ARM64",
-  "description": "Minimal live rescue environment for any UEFI ARM64 machine. Root shell, no password. Install tools with apk.",
+  "description": "Minimal live rescue for any UEFI ARM64 machine. SSH enabled at boot, packages served locally.",
   "arch": "arm64",
   "bootMethod": "ipxe",
   "mac": null,
   "assignedIp": null,
   "bootFile": "files/shared/ipxe/ipxe-arm64.efi",
+  "ssh": "root / rescue123",
   "ipxe": {
     "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
     "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
-    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main console=tty0"
+    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/apkovl.tar.gz console=tty0"
   }
 }

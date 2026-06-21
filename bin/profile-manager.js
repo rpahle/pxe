@@ -76,11 +76,11 @@ async function promptSelectProfiles(profiles) {
   profiles.forEach((p, i) => {
     const macInfo  = p.mac ? `MAC: ${p.mac}` : `any ${p.arch} client`;
     const warning  = p._filesExist ? '' : '  ⚠ files missing';
-    const rootpass = extractRootpass(p);
+    const sshInfo = p.ssh || (extractRootpass(p) ? `root / ${extractRootpass(p)}` : null);
     console.log(`  [${i + 1}] ${p.id.padEnd(30)} ${p.name}`);
     console.log(`       ${p.description}`);
     console.log(`       arch: ${p.arch} | method: ${p.bootMethod} | ${macInfo}${warning}`);
-    if (rootpass) console.log(`       ssh: root / ${rootpass}`);
+    if (sshInfo) console.log(`       ssh: ${sshInfo}`);
   });
   console.log('  [0] All profiles\n');
 

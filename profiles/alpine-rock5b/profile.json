@@ -1,18 +1,19 @@
 {
   "id": "alpine-rock5b",
   "name": "Alpine Linux 3.24 — Rock5B",
-  "description": "Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot (root / rescue123).",
+  "description": "Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot, packages served locally.",
   "arch": "arm64",
   "bootMethod": "pxelinux",
   "mac": "ba:bd:81:07:be:e4",
   "assignedIp": "192.168.50.2",
   "bootFile": "pxelinux.cfg/default",
   "filesDir": "alpine-rescue-arm64",
+  "ssh": "root / rescue123",
   "pxelinux": {
     "label": "alpine",
     "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
     "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
-    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main",
+    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz",
     "fdt": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/dtb/rockchip/rk3588-rock-5b.dtb"
   }
 }

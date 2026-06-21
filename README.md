@@ -45,7 +45,12 @@ pxe/
 │   ├── alpine-rescue-arm64/     # Alpine 3.24 ARM64 netboot files (~290 MB total, shared)
 │   │   ├── vmlinuz-lts          # Kernel (~12 MB)
 │   │   ├── initramfs-lts        # Initramfs (~27 MB)
-│   │   └── modloop-lts          # Kernel modules (~252 MB)
+│   │   ├── modloop-lts          # Kernel modules (~252 MB)
+│   │   ├── apkovl.tar.gz        # Boot overlay: installs openssh from local packages
+│   │   ├── dtb/rockchip/rk3588-rock-5b.dtb
+│   │   └── apk/v3.24/main/aarch64/
+│   │       ├── APKINDEX.tar.gz  # Alpine package index
+│   │       └── openssh-*.apk    # openssh and deps — no CDN needed at boot
 │   └── sysrescue-x86_64/        # SystemRescue 13 netboot files (~1.3 GB total)
 │       └── sysresccd/
 │           ├── boot/
@@ -357,21 +362,36 @@ Lightweight rescue environment for any UEFI ARM64 machine — Ampere, AWS Gravit
   "ipxe": {
     "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
     "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
-    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main console=tty0"
+    "append": "ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/apkovl.tar.gz console=tty0"
   }
 }
 ```
 
-The `modloop` parameter points to the local kernel modules file. `alpine_repo` points to Alpine's CDN for `apk add` — remove it if the rescue machine has no internet access.
+All boot files and SSH packages are served from the local PXE server — no internet access required on the rescue machine.
 
-**Boot files** — download from Alpine CDN:
+The `apkovl` overlay installs openssh at boot from pre-downloaded packages in `files/alpine-rescue-arm64/apk/`. The script parses the PXE server URL from the kernel command line, so it works regardless of what IP `config.js` uses.
+
+**Boot files** — download from Alpine CDN (run once to populate `files/`):
 ```bash
 BASE=https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/netboot
-mkdir -p files/alpine-rescue-arm64
+mkdir -p files/alpine-rescue-arm64/apk/v3.24/main/aarch64
 
 wget $BASE/vmlinuz-lts    -O files/alpine-rescue-arm64/vmlinuz-lts
 wget $BASE/initramfs-lts  -O files/alpine-rescue-arm64/initramfs-lts
 wget $BASE/modloop-lts    -O files/alpine-rescue-arm64/modloop-lts
+wget $BASE/../APKINDEX.tar.gz  -O files/alpine-rescue-arm64/apk/v3.24/main/aarch64/APKINDEX.tar.gz  # wrong path — see below
+
+# Download the APKINDEX and openssh packages
+REPO=https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64
+APK_DST=files/alpine-rescue-arm64/apk/v3.24/main/aarch64
+wget $REPO/APKINDEX.tar.gz -O $APK_DST/APKINDEX.tar.gz
+
+# Find exact versions from the index, then download:
+for pkg in libcrypto3 openssh openssh-client-common openssh-client-default \
+           openssh-keygen openssh-server openssh-server-common openssh-sftp-server; do
+  VER=$(tar -xOf $APK_DST/APKINDEX.tar.gz APKINDEX | awk "/^P:$pkg$/{found=1} found && /^V:/{print substr(\$0,3); exit}")
+  wget $REPO/${pkg}-${VER}.apk -O $APK_DST/${pkg}-${VER}.apk
+done
 ```
 
 Also download the ARM64 iPXE EFI binary:
@@ -379,12 +399,10 @@ Also download the ARM64 iPXE EFI binary:
 wget https://boot.ipxe.org/arm64-efi/ipxe.efi -O files/shared/ipxe/ipxe-arm64.efi
 ```
 
-**At boot**, you get a root shell directly (no password). To enable SSH:
-```sh
-apk add openssh
-echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-passwd          # set a password
-rc-service sshd start
+**At boot**, SSH comes up automatically (~15–20 s after the shell prompt):
+```bash
+ssh root@<assigned-ip>
+# Password: rescue123
 ```
 
 ---
@@ -418,7 +436,7 @@ rc-service sshd start
     "label": "alpine",
     "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
     "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
-    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main",
+    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz",
     "fdt": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/dtb/rockchip/rk3588-rock-5b.dtb"
   }
 }
