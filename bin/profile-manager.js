@@ -57,6 +57,15 @@ function loadProfiles(rootDir) {
   return profiles;
 }
 
+function extractRootpass(p) {
+  const candidates = [p.ipxe?.append, p.pxelinux?.append, p.grub?.linux].filter(Boolean);
+  for (const s of candidates) {
+    const m = s.match(/rootpass=(\S+)/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 async function promptSelectProfiles(profiles) {
   if (profiles.length === 0) {
     console.log('[profiles] No profiles found in profiles/ — starting with no boot profiles.');
@@ -67,9 +76,11 @@ async function promptSelectProfiles(profiles) {
   profiles.forEach((p, i) => {
     const macInfo  = p.mac ? `MAC: ${p.mac}` : `any ${p.arch} client`;
     const warning  = p._filesExist ? '' : '  ⚠ files missing';
+    const rootpass = extractRootpass(p);
     console.log(`  [${i + 1}] ${p.id.padEnd(30)} ${p.name}`);
     console.log(`       ${p.description}`);
     console.log(`       arch: ${p.arch} | method: ${p.bootMethod} | ${macInfo}${warning}`);
+    if (rootpass) console.log(`       ssh: root / ${rootpass}`);
   });
   console.log('  [0] All profiles\n');
 

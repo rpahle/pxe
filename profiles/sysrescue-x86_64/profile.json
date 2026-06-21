@@ -14,6 +14,6 @@
       "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/amd_ucode.img",
       "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/sysresccd.img"
     ],
-    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp"
+    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp rootpass=rescue123"
   }
 }
