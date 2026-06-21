@@ -90,6 +90,7 @@ function buildReply(msgType, xid, mac, yiaddr, bootFile) {
   optBytes(54, ...ipToBytes(cfg.serverIp));   // server identifier
   optU32(51, 3600);                           // lease time: 1 hour
   optBytes(1,  ...ipToBytes(cfg.subnetMask)); // subnet mask
+  if (cfg.gateway) optBytes(3, ...ipToBytes(cfg.gateway)); // router
   optStr(66, cfg.serverIp);                   // TFTP server name
   optStr(67, bootFile);                       // boot filename
   buf[o++] = 255;                             // end

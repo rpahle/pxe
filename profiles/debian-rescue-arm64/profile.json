@@ -5,7 +5,7 @@
   "arch": "arm64",
   "bootMethod": "pxelinux",
   "mac": "ba:bd:81:07:be:e4",
-  "assignedIp": "192.168.50.2",
+  "assignedIp": "192.168.1.2",
   "bootFile": "pxelinux.cfg/default",
   "pxelinux": {
     "label": "rescue",
