@@ -1,0 +1,19 @@
+{
+  "id": "sysrescue-x86_64",
+  "name": "SystemRescue 13 — x86_64",
+  "description": "Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server. Squashfs fetched over HTTP at boot.",
+  "arch": "x86_64",
+  "bootMethod": "ipxe",
+  "mac": null,
+  "assignedIp": null,
+  "bootFile": "files/shared/ipxe/ipxe.efi",
+  "ipxe": {
+    "kernel": "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/vmlinuz",
+    "initrd": [
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/intel_ucode.img",
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/amd_ucode.img",
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/sysresccd.img"
+    ],
+    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp"
+  }
+}

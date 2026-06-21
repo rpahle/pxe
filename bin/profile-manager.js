@@ -115,8 +115,10 @@ function generateIpxeScript(profile) {
   if (profile.bootMethod === 'ipxe-iso') {
     return `#!ipxe\nsanboot ${i.sanboot}\n`;
   }
-  // ipxe: kernel + initrd
-  return `#!ipxe\nkernel ${i.kernel} ${i.append || ''}\ninitrd ${i.initrd}\nboot\n`;
+  const initrdLines = Array.isArray(i.initrd)
+    ? i.initrd.map(u => `initrd ${u}`).join('\n')
+    : `initrd ${i.initrd}`;
+  return `#!ipxe\nkernel ${i.kernel} ${i.append || ''}\n${initrdLines}\nboot\n`;
 }
 
 // Build MAC→entry and arch→entry lookup tables for the DHCP server.

@@ -20,19 +20,32 @@ pxe/
 │   └── profile-manager.js   # Profile loading, config generation, DHCP table building
 ├── config.js                # Server IP, port, subnet, arch IP pool
 ├── profiles/                # Tracked in git — one folder per boot target
-│   └── debian-rescue-arm64/
-│       ├── profile.json     # Boot config, metadata, file paths
-│       └── preseed.cfg      # Debian installer config (SSH console, password)
-├── files/                   # Boot assets — gitignored, placed manually
+│   ├── debian-rescue-arm64/
+│   │   ├── profile.json     # Boot config, metadata, file paths
+│   │   └── preseed.cfg      # Debian installer config (SSH console, password)
+│   └── sysrescue-x86_64/
+│       └── profile.json     # SystemRescue 13 HTTP netboot for x86_64 EFI
+├── files/                   # Boot assets — gitignored, place manually
 │   ├── shared/
 │   │   └── ipxe/
-│   │       ├── ipxe.efi         # x86_64 EFI iPXE binary
-│   │       └── undionly.kpxe    # x86 BIOS iPXE binary
-│   └── debian-rescue-arm64/
-│       ├── linux                # ARM64 netboot kernel (~36 MB)
-│       ├── initrd.gz            # ARM64 netboot initrd (~41 MB)
-│       ├── grubaa64.efi         # GRUB EFI binary for ARM64
-│       └── dtb/rockchip/rk3588-rock-5b.dtb
+│   │       ├── ipxe.efi         # x86_64 EFI iPXE binary (~1.1 MB)
+│   │       └── undionly.kpxe    # x86 BIOS iPXE binary (~70 KB)
+│   ├── debian-rescue-arm64/
+│   │   ├── linux                # ARM64 netboot kernel (~36 MB)
+│   │   ├── initrd.gz            # ARM64 netboot initrd (~41 MB)
+│   │   ├── grubaa64.efi         # GRUB EFI binary for ARM64
+│   │   └── dtb/rockchip/rk3588-rock-5b.dtb
+│   └── sysrescue-x86_64/        # SystemRescue 13 netboot files (~1.3 GB total)
+│       └── sysresccd/
+│           ├── boot/
+│           │   ├── intel_ucode.img    # Intel CPU microcode (~14 MB)
+│           │   ├── amd_ucode.img      # AMD CPU microcode (~0.3 MB)
+│           │   └── x86_64/
+│           │       ├── vmlinuz        # Kernel (~16 MB)
+│           │       └── sysresccd.img  # Initramfs (~175 MB)
+│           └── x86_64/
+│               ├── airootfs.sfs       # Squashfs root filesystem (~1.08 GB)
+│               └── airootfs.sha512
 └── pxelinux.cfg/
     └── default                  # Auto-generated at startup from active profile
 ```
@@ -90,9 +103,9 @@ Available boot profiles:
   [1] debian-rescue-arm64    Debian Rescue — ARM64 (Rock5B)
                              Boots Debian netboot installer on Rock5B via U-Boot PXE. SSH console for NVMe repair.
                              arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
-  [2] sysrescue-x86          SystemRescue — x86 ISO
-                             Boots SystemRescue ISO via iPXE sanboot.
-                             arch: x86 | method: ipxe-iso | any x86 BIOS client
+  [2] sysrescue-x86_64       SystemRescue 13 — x86_64
+                             Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.
+                             arch: x86_64 | method: ipxe | any x86_64 EFI client
   [0] All profiles
 
 Select profiles [1]:
@@ -231,8 +244,8 @@ Download iPXE binaries from [boot.ipxe.org](https://boot.ipxe.org):
 ```bash
 mkdir -p files/shared/ipxe
 
-wget https://boot.ipxe.org/ipxe.efi        -O files/shared/ipxe/ipxe.efi      # x86_64 EFI
-wget https://boot.ipxe.org/undionly.kpxe   -O files/shared/ipxe/undionly.kpxe  # x86 BIOS
+wget https://boot.ipxe.org/x86_64-efi/ipxe.efi  -O files/shared/ipxe/ipxe.efi      # x86_64 EFI
+wget https://boot.ipxe.org/undionly.kpxe          -O files/shared/ipxe/undionly.kpxe  # x86 BIOS
 ```
 
 Then place OS-specific assets in `files/<profile-id>/`:
@@ -338,36 +351,55 @@ wget "https://downloads.sourceforge.net/project/systemrescuecd/sysrescue/${VER}/
 
 ---
 
-### Example 3 — SystemRescue ISO, x86_64 EFI (iPXE sanboot)
+### Example 3 — SystemRescue 13, x86_64 EFI (HTTP netboot) ← included
 
-Same as above but targets EFI machines. Uses the EFI iPXE binary.
+This profile is already in the repo. It uses HTTP netboot: kernel, microcode initrds, and initramfs are fetched separately over HTTP, and the squashfs root filesystem is streamed by the kernel from `archiso_http_srv` at boot. This is faster than sanboot because only needed files are fetched.
 
-**`profiles/sysrescue-x86_64/profile.json`:**
+**`profiles/sysrescue-x86_64/profile.json`** (already in repo):
 ```json
 {
   "id": "sysrescue-x86_64",
-  "name": "SystemRescue — x86_64 EFI ISO",
-  "description": "Boots SystemRescue live ISO via iPXE HTTP sanboot. For x86_64 EFI machines.",
+  "name": "SystemRescue 13 — x86_64",
+  "description": "Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server. Squashfs fetched over HTTP at boot.",
   "arch": "x86_64",
-  "bootMethod": "ipxe-iso",
+  "bootMethod": "ipxe",
   "mac": null,
   "assignedIp": null,
   "bootFile": "files/shared/ipxe/ipxe.efi",
   "ipxe": {
-    "sanboot": "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/systemrescue.iso"
+    "kernel": "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/vmlinuz",
+    "initrd": [
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/intel_ucode.img",
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/amd_ucode.img",
+      "http://{serverIp}:{httpPort}/files/sysrescue-x86_64/sysresccd/boot/x86_64/sysresccd.img"
+    ],
+    "append": "archisobasedir=sysresccd archiso_http_srv=http://{serverIp}:{httpPort}/files/sysrescue-x86_64/ ip=dhcp"
   }
 }
 ```
 
-**Boot files:**
+The `archiso_http_srv` parameter tells the SystemRescue initramfs where to fetch `sysresccd/x86_64/airootfs.sfs` from. It constructs: `{archiso_http_srv}{archisobasedir}/{arch}/airootfs.sfs`.
+
+**Boot files** — extract from ISO on Linux:
 ```bash
-VER=11.02
-mkdir -p files/sysrescue-x86_64
-wget "https://downloads.sourceforge.net/project/systemrescuecd/sysrescue/${VER}/systemrescue-${VER}.iso" \
-     -O files/sysrescue-x86_64/systemrescue.iso
+VER=13.01
+ISO=systemrescue-${VER}-amd64.iso
+wget "https://fastly-cdn.system-rescue.org/releases/${VER}/${ISO}"
+
+TMP=$(mktemp -d) && mount -o loop,ro "$ISO" "$TMP"
+mkdir -p files/sysrescue-x86_64/sysresccd/{boot/x86_64,x86_64}
+cp "$TMP/sysresccd/boot/x86_64/vmlinuz"       files/sysrescue-x86_64/sysresccd/boot/x86_64/vmlinuz
+cp "$TMP/sysresccd/boot/x86_64/sysresccd.img" files/sysrescue-x86_64/sysresccd/boot/x86_64/sysresccd.img
+cp "$TMP/sysresccd/boot/intel_ucode.img"       files/sysrescue-x86_64/sysresccd/boot/intel_ucode.img
+cp "$TMP/sysresccd/boot/amd_ucode.img"         files/sysrescue-x86_64/sysresccd/boot/amd_ucode.img
+cp "$TMP/sysresccd/x86_64/airootfs.sfs"        files/sysrescue-x86_64/sysresccd/x86_64/airootfs.sfs
+cp "$TMP/sysresccd/x86_64/airootfs.sha512"     files/sysrescue-x86_64/sysresccd/x86_64/airootfs.sha512
+umount "$TMP" && rm "$ISO"
 ```
 
-> Note: The same ISO file works for both BIOS and EFI profiles. You can point both `sysrescue-x86` and `sysrescue-x86_64` at the same ISO by symlinking on Linux, or just copy it.
+On Windows: mount the ISO in Explorer and copy the files, or use PowerShell `Mount-DiskImage`.
+
+**At boot**, SystemRescue starts root shell + SSH server (`root` user, set password via `rootpass=<pw>` kernel param).
 
 ---
 
