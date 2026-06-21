@@ -25,6 +25,8 @@ pxe/
 │   │   └── preseed.cfg      # Debian installer config (SSH console, password)
 │   ├── alpine-rescue-arm64/
 │   │   └── profile.json     # Alpine 3.24 HTTP netboot for any UEFI ARM64 machine
+│   ├── alpine-rock5b/
+│   │   └── profile.json     # Alpine 3.24 for Rock5B via U-Boot — SSH auto-enabled
 │   └── sysrescue-x86_64/
 │       └── profile.json     # SystemRescue 13 HTTP netboot for x86_64 EFI
 ├── files/                   # Boot assets — gitignored, place manually
@@ -38,7 +40,9 @@ pxe/
 │   │   ├── initrd.gz            # ARM64 netboot initrd (~41 MB)
 │   │   ├── grubaa64.efi         # GRUB EFI binary for ARM64
 │   │   └── dtb/rockchip/rk3588-rock-5b.dtb
-│   ├── alpine-rescue-arm64/     # Alpine 3.24 ARM64 netboot files (~290 MB total)
+│   ├── alpine-rock5b/           # Rock5B-specific apkovl (used by alpine-rock5b profile)
+│   │   └── apkovl.tar.gz        # Boot overlay: installs openssh, sets root password
+│   ├── alpine-rescue-arm64/     # Alpine 3.24 ARM64 netboot files (~290 MB total, shared)
 │   │   ├── vmlinuz-lts          # Kernel (~12 MB)
 │   │   ├── initramfs-lts        # Initramfs (~27 MB)
 │   │   └── modloop-lts          # Kernel modules (~252 MB)
@@ -110,10 +114,14 @@ Available boot profiles:
   [1] debian-rescue-arm64    Debian Rescue — ARM64 (Rock5B)
                              Boots Debian netboot installer on Rock5B via U-Boot PXE. SSH console for NVMe repair.
                              arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
-  [2] alpine-rescue-arm64     Alpine Linux 3.24 — ARM64
+  [2] alpine-rock5b            Alpine Linux 3.24 — Rock5B
+                             Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot.
+                             arch: arm64 | method: pxelinux | MAC: ba:bd:81:07:be:e4
+                             ssh: root / rescue123
+  [3] alpine-rescue-arm64     Alpine Linux 3.24 — ARM64
                              Minimal live rescue environment for any UEFI ARM64 machine.
                              arch: arm64 | method: ipxe | any ARM64 EFI client
-  [3] sysrescue-x86_64       SystemRescue 13 — x86_64
+  [4] sysrescue-x86_64       SystemRescue 13 — x86_64
                              Full rescue toolkit: ZFS, disk repair, filesystem tools, SSH server.
                              arch: x86_64 | method: ipxe | any x86_64 EFI client
                              ssh: root / rescue123
@@ -378,6 +386,53 @@ echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
 passwd          # set a password
 rc-service sshd start
 ```
+
+---
+
+### Example 2b — Alpine Linux 3.24, Rock5B (U-Boot PXE) ← included
+
+Same Alpine kernel as the generic ARM64 profile but MAC-matched to the Rock5B, with the correct serial console, Rock5B DTB, and an **apkovl** overlay that installs openssh and enables root login automatically at boot.
+
+The apkovl (`files/alpine-rock5b/apkovl.tar.gz`) contains a single startup script:
+```sh
+#!/bin/sh
+apk add --quiet openssh
+echo 'root:rescue123' | chpasswd
+echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+rc-service sshd start
+```
+
+**`profiles/alpine-rock5b/profile.json`** (already in repo):
+```json
+{
+  "id": "alpine-rock5b",
+  "name": "Alpine Linux 3.24 — Rock5B",
+  "description": "Lightweight live rescue for Rock5B via U-Boot PXE. SSH enabled at boot (root / rescue123).",
+  "arch": "arm64",
+  "bootMethod": "pxelinux",
+  "mac": "ba:bd:81:07:be:e4",
+  "assignedIp": "192.168.50.2",
+  "bootFile": "pxelinux.cfg/default",
+  "filesDir": "alpine-rescue-arm64",
+  "pxelinux": {
+    "label": "alpine",
+    "kernel": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/vmlinuz-lts",
+    "initrd": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/initramfs-lts",
+    "append": "console=ttyS2,1500000n8 ip=dhcp modloop=http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/modloop-lts apkovl=http://{serverIp}:{httpPort}/files/alpine-rock5b/apkovl.tar.gz alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.24/main",
+    "fdt": "http://{serverIp}:{httpPort}/files/alpine-rescue-arm64/dtb/rockchip/rk3588-rock-5b.dtb"
+  }
+}
+```
+
+`filesDir` tells the server to check `files/alpine-rescue-arm64/` for boot assets instead of `files/alpine-rock5b/` — the two Alpine profiles share the same kernel, initrd, modloop, and DTB.
+
+**SSH access once booted** (requires the rescue machine to reach Alpine's CDN to install openssh):
+```bash
+ssh root@192.168.50.2
+# Password: rescue123
+```
+
+**Note:** SSH setup runs from the `local` OpenRC service, which starts after networking. It takes ~15–20 seconds after the shell prompt appears. If SSH is refused initially, wait a moment and retry.
 
 ---
 

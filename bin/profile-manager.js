@@ -44,7 +44,7 @@ function loadProfiles(rootDir) {
       const raw     = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
       const profile = expandObject(raw);
 
-      const filesDir = path.join(rootDir, 'files', profile.id);
+      const filesDir = path.join(rootDir, 'files', profile.filesDir || profile.id);
       profile._filesExist = fs.existsSync(filesDir);
       if (!profile._filesExist) {
         console.warn(`[profiles] WARNING: files/${profile.id}/ not found — profile will load but boot files may be missing`);
